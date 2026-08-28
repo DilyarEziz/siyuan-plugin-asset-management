@@ -1,0 +1,268 @@
+{
+  "version": 5,
+  "source": {
+    "name": "Icons8",
+    "provider": "Icons8",
+    "url": "https://icons8.com"
+  },
+  "categories": [
+    {
+      "id": "digital",
+      "label": { "zh_CN": "数码", "en_US": "Digital" },
+      "iconCount": 9
+    },
+    {
+      "id": "appliance",
+      "label": { "zh_CN": "家电", "en_US": "Appliance" },
+      "iconCount": 7
+    },
+    {
+      "id": "virtual",
+      "label": { "zh_CN": "虚拟", "en_US": "Virtual" },
+      "iconCount": 5
+    },
+    {
+      "id": "service",
+      "label": { "zh_CN": "数字服务", "en_US": "Service" },
+      "iconCount": 5
+    },
+    {
+      "id": "general",
+      "label": { "zh_CN": "通用", "en_US": "General" },
+      "iconCount": 7
+    }
+  ],
+  "icons": [
+    {
+      "id": "icons8-camera",
+      "filename": "icons8-camera-100.png",
+      "category": "digital",
+      "label": { "zh_CN": "相机", "en_US": "Camera" },
+      "keywords": { "zh_CN": ["相机", "摄影", "数码"], "en_US": ["camera", "photography", "digital"] }
+    },
+    {
+      "id": "icons8-smartphone",
+      "filename": "icons8-smartphone-100.png",
+      "category": "digital",
+      "label": { "zh_CN": "智能手机", "en_US": "Smartphone" },
+      "keywords": { "zh_CN": ["手机", "智能", "数码"], "en_US": ["smartphone", "phone", "digital"] }
+    },
+    {
+      "id": "icons8-smart-watch",
+      "filename": "icons8-smart-watch-100.png",
+      "category": "digital",
+      "label": { "zh_CN": "智能手表", "en_US": "Smart Watch" },
+      "keywords": { "zh_CN": ["手表", "智能", "穿戴"], "en_US": ["smartwatch", "wearable", "digital"] }
+    },
+    {
+      "id": "icons8-gamepad",
+      "filename": "icons8-gamepad-100.png",
+      "category": "digital",
+      "label": { "zh_CN": "游戏手柄", "en_US": "Gamepad" },
+      "keywords": { "zh_CN": ["手柄", "游戏", "数码"], "en_US": ["gamepad", "gaming", "digital"] }
+    },
+    {
+      "id": "icons8-vr-glasses",
+      "filename": "icons8-vr-glasses-64.png",
+      "category": "digital",
+      "label": { "zh_CN": "VR眼镜", "en_US": "VR Glasses" },
+      "keywords": { "zh_CN": ["VR", "眼镜", "数码"], "en_US": ["vr", "glasses", "digital"] }
+    },
+    {
+      "id": "icons8-computer",
+      "filename": "icons8-computer-100.png",
+      "category": "digital",
+      "label": { "zh_CN": "电脑", "en_US": "Computer" },
+      "keywords": { "zh_CN": ["电脑", "主机", "设备"], "en_US": ["computer", "pc", "device"] }
+    },
+    {
+      "id": "icons8-laptop",
+      "filename": "icons8-laptop-100.png",
+      "category": "digital",
+      "label": { "zh_CN": "笔记本电脑", "en_US": "Laptop" },
+      "keywords": { "zh_CN": ["电脑", "笔记本", "设备"], "en_US": ["computer", "laptop", "device"] }
+    },
+    {
+      "id": "icons8-keyboard",
+      "filename": "icons8-keyboard-100.png",
+      "category": "digital",
+      "label": { "zh_CN": "键盘", "en_US": "Keyboard" },
+      "keywords": { "zh_CN": ["键盘", "外设", "电脑"], "en_US": ["keyboard", "peripheral", "computer"] }
+    },
+    {
+      "id": "icons8-mouse",
+      "filename": "icons8-mouse-100.png",
+      "category": "digital",
+      "label": { "zh_CN": "鼠标", "en_US": "Mouse" },
+      "keywords": { "zh_CN": ["鼠标", "外设", "电脑"], "en_US": ["mouse", "peripheral", "computer"] }
+    },
+    {
+      "id": "icons8-blender",
+      "filename": "icons8-blender-100.png",
+      "category": "appliance",
+      "label": { "zh_CN": "搅拌机", "en_US": "Blender" },
+      "keywords": { "zh_CN": ["搅拌机", "破壁机", "厨房"], "en_US": ["blender", "kitchen", "appliance"] }
+    },
+    {
+      "id": "icons8-cooker",
+      "filename": "icons8-cooker-100.png",
+      "category": "appliance",
+      "label": { "zh_CN": "电饭煲", "en_US": "Rice Cooker" },
+      "keywords": { "zh_CN": ["电饭煲", "做饭", "厨房"], "en_US": ["cooker", "rice", "kitchen"] }
+    },
+    {
+      "id": "icons8-kettle",
+      "filename": "icons8-kettle-100.png",
+      "category": "appliance",
+      "label": { "zh_CN": "水壶", "en_US": "Kettle" },
+      "keywords": { "zh_CN": ["水壶", "烧水", "厨房"], "en_US": ["kettle", "water", "kitchen"] }
+    },
+    {
+      "id": "icons8-microwave",
+      "filename": "icons8-microwave-100.png",
+      "category": "appliance",
+      "label": { "zh_CN": "微波炉", "en_US": "Microwave" },
+      "keywords": { "zh_CN": ["微波炉", "加热", "厨房"], "en_US": ["microwave", "kitchen", "appliance"] }
+    },
+    {
+      "id": "icons8-fan",
+      "filename": "icons8-fan-100.png",
+      "category": "appliance",
+      "label": { "zh_CN": "风扇", "en_US": "Fan" },
+      "keywords": { "zh_CN": ["风扇", "降温", "家电"], "en_US": ["fan", "cooling", "appliance"] }
+    },
+    {
+      "id": "icons8-washing-machine",
+      "filename": "icons8-washing-machine-100.png",
+      "category": "appliance",
+      "label": { "zh_CN": "洗衣机", "en_US": "Washing Machine" },
+      "keywords": { "zh_CN": ["洗衣机", "洗衣", "家电"], "en_US": ["washer", "laundry", "appliance"] }
+    },
+    {
+      "id": "icons8-television",
+      "filename": "icons8-television-64.png",
+      "category": "appliance",
+      "label": { "zh_CN": "电视", "en_US": "Television" },
+      "keywords": { "zh_CN": ["电视", "影音", "家电"], "en_US": ["television", "tv", "appliance"] }
+    },
+    {
+      "id": "icons8-credit-card",
+      "filename": "icons8-credit-card-64.png",
+      "category": "virtual",
+      "label": { "zh_CN": "信用卡", "en_US": "Credit Card" },
+      "keywords": { "zh_CN": ["信用卡", "银行卡", "支付"], "en_US": ["credit card", "bank card", "payment"] }
+    },
+    {
+      "id": "icons8-money",
+      "filename": "icons8-money-64.png",
+      "category": "virtual",
+      "label": { "zh_CN": "现金", "en_US": "Money" },
+      "keywords": { "zh_CN": ["现金", "钱", "货币"], "en_US": ["money", "cash", "currency"] }
+    },
+    {
+      "id": "icons8-box",
+      "filename": "icons8-box-64.png",
+      "category": "general",
+      "label": { "zh_CN": "收纳箱", "en_US": "Box" },
+      "keywords": { "zh_CN": ["箱子", "收纳", "通用", "默认"], "en_US": ["box", "storage", "general", "default"] }
+    },
+    {
+      "id": "icons8-360-degrees",
+      "filename": "icons8-360-degrees-64.png",
+      "category": "general",
+      "label": { "zh_CN": "全景", "en_US": "360 Degrees" },
+      "keywords": { "zh_CN": ["全景", "旋转", "360"], "en_US": ["panorama", "360", "rotate"] }
+    },
+    {
+      "id": "icons8-ai-idea",
+      "filename": "icons8-ai-idea-64.png",
+      "category": "service",
+      "label": { "zh_CN": "AI 智能", "en_US": "AI Idea" },
+      "keywords": { "zh_CN": ["AI", "人工智能", "智能", "灵感"], "en_US": ["ai", "artificial intelligence", "smart", "idea"] }
+    },
+    {
+      "id": "icons8-book",
+      "filename": "icons8-book-64.png",
+      "category": "general",
+      "label": { "zh_CN": "书籍", "en_US": "Book" },
+      "keywords": { "zh_CN": ["书", "阅读", "图书"], "en_US": ["book", "reading", "books"] }
+    },
+    {
+      "id": "icons8-chart",
+      "filename": "icons8-chart-64.png",
+      "category": "service",
+      "label": { "zh_CN": "图表", "en_US": "Chart" },
+      "keywords": { "zh_CN": ["图表", "统计", "分析"], "en_US": ["chart", "statistics", "analytics"] }
+    },
+    {
+      "id": "icons8-cloud-computing",
+      "filename": "icons8-cloud-computing-64.png",
+      "category": "service",
+      "label": { "zh_CN": "云服务", "en_US": "Cloud" },
+      "keywords": { "zh_CN": ["云", "云计算", "服务器"], "en_US": ["cloud", "cloud computing", "server"] }
+    },
+    {
+      "id": "icons8-colours",
+      "filename": "icons8-colours-64.png",
+      "category": "general",
+      "label": { "zh_CN": "调色板", "en_US": "Palette" },
+      "keywords": { "zh_CN": ["颜色", "调色", "设计"], "en_US": ["colors", "palette", "design"] }
+    },
+    {
+      "id": "icons8-data",
+      "filename": "icons8-data-64.png",
+      "category": "service",
+      "label": { "zh_CN": "数据", "en_US": "Data" },
+      "keywords": { "zh_CN": ["数据", "数据库", "存储"], "en_US": ["data", "database", "storage"] }
+    },
+    {
+      "id": "icons8-diamond",
+      "filename": "icons8-diamond-64.png",
+      "category": "virtual",
+      "label": { "zh_CN": "钻石", "en_US": "Diamond" },
+      "keywords": { "zh_CN": ["钻石", "珠宝", "贵重"], "en_US": ["diamond", "jewelry", "luxury"] }
+    },
+    {
+      "id": "icons8-galleon",
+      "filename": "icons8-galleon-100.png",
+      "category": "general",
+      "label": { "zh_CN": "帆船", "en_US": "Galleon" },
+      "keywords": { "zh_CN": ["帆船", "船", "旅行"], "en_US": ["galleon", "ship", "sailing"] }
+    },
+    {
+      "id": "icons8-gold",
+      "filename": "icons8-gold-100.png",
+      "category": "virtual",
+      "label": { "zh_CN": "黄金", "en_US": "Gold" },
+      "keywords": { "zh_CN": ["黄金", "金条", "投资"], "en_US": ["gold", "bullion", "investment"] }
+    },
+    {
+      "id": "icons8-id-card",
+      "filename": "icons8-id-card-64.png",
+      "category": "general",
+      "label": { "zh_CN": "证件", "en_US": "ID Card" },
+      "keywords": { "zh_CN": ["身份证", "证件", "卡片"], "en_US": ["id card", "identity", "card"] }
+    },
+    {
+      "id": "icons8-map",
+      "filename": "icons8-map-100.png",
+      "category": "general",
+      "label": { "zh_CN": "地图", "en_US": "Map" },
+      "keywords": { "zh_CN": ["地图", "导航", "位置"], "en_US": ["map", "navigation", "location"] }
+    },
+    {
+      "id": "icons8-report",
+      "filename": "icons8-report-64.png",
+      "category": "service",
+      "label": { "zh_CN": "报表", "en_US": "Report" },
+      "keywords": { "zh_CN": ["报表", "报告", "文档"], "en_US": ["report", "document", "file"] }
+    },
+    {
+      "id": "icons8-token-coins",
+      "filename": "icons8-token-coins-64.png",
+      "category": "virtual",
+      "label": { "zh_CN": "代币", "en_US": "Token" },
+      "keywords": { "zh_CN": ["代币", "加密货币", "硬币"], "en_US": ["token", "crypto", "coin"] }
+    }
+  ]
+}

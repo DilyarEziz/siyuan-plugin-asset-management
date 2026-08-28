@@ -1,0 +1,36 @@
+'use strict';
+const assert = require('node:assert/strict');
+const { asset, createHarness, flushDialog, setValue } = require('./formal-workflow-harness');
+const ID = 'a1000000-0000-4000-8000-000000000001';
+
+(async () => {
+    const h = createHarness([asset(ID, 'physical', 'Camera')]);
+    h.plugin.openSettingsDialog(); await flushDialog();
+    const tagsTab = h.document.querySelector('[data-settings-tab="tags"]'); tagsTab.onclick();
+    const form = h.document.querySelector('.am-settings-tags');
+    const settingsDialog = h.connectedDialogs()[0];
+    const lifecycleBeforeCreate = { created: h.dialogStats.created, destroyed: h.dialogStats.destroyed };
+    setValue(form, 'settingsTagLabel', 'Travel'); await form.querySelector('[data-action="settings-create-tag"]').onclick();
+    assert.equal(settingsDialog.element.isConnected, true); assert.deepEqual({ created: h.dialogStats.created, destroyed: h.dialogStats.destroyed }, lifecycleBeforeCreate);
+    const travel = h.plugin._tags.find(tag => tag.label === 'Travel');
+    assert.ok(travel, h.plugin.toasts.join(' | '));
+    const [work] = await Promise.all([h.plugin.createTag({ label: 'Work' }), h.plugin.createTag({ label: 'Home' })]);
+    assert.match(travel.id, /^[0-9a-f-]{36}$/); assert.equal(h.state['tags.json'].tags.length, 3);
+    await h.plugin.updateAsset(ID, { tagIds: [travel.id] });
+    const before = structuredClone(h.plugin._tags);
+    await assert.rejects(() => h.plugin.deleteTag(travel.id), /引用|referenced/i);
+    assert.deepEqual(h.plugin._tags, before, 'failed delete cannot change memory');
+    tagsTab.onclick();
+    const deleteWork = h.document.querySelector(`[data-settings-tag-delete="${work.id}"]`);
+    await deleteWork.onclick(); assert.equal(h.plugin._tags.length, 2);
+    const html = h.plugin.renderSettingsTags(); assert.match(html, /settings-create-tag/); assert.match(html, /1 项资产引用/);
+    assert.ok(h.document.querySelector('[data-action="settings-create-tag"]'), 'real settings dialog renders tag CRUD DOM');
+    h.io.failFile = 'tags.json'; const stable = structuredClone(h.plugin._tags);
+    const failureForm = h.document.querySelector('.am-settings-tags'); setValue(failureForm, 'settingsTagLabel', 'Failed');
+    const lifecycleBeforeFailure = { created: h.dialogStats.created, destroyed: h.dialogStats.destroyed };
+    await failureForm.querySelector('[data-action="settings-create-tag"]').onclick(); await flushDialog();
+    assert.deepEqual(h.plugin._tags, stable);
+    assert.equal(settingsDialog.element.isConnected, true); assert.equal(failureForm.querySelector('[name="settingsTagLabel"]').value, 'Failed');
+    assert.deepEqual({ created: h.dialogStats.created, destroyed: h.dialogStats.destroyed }, lifecycleBeforeFailure);
+    console.log('[formal-tag-workflow] passed');
+})().catch(error => { console.error(error); process.exit(1); });

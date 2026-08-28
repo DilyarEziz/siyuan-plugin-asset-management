@@ -1,0 +1,132 @@
+"use strict";
+
+const assert = require("node:assert/strict");
+const { buildFormalReport, buildFormalDashboard } = require("../api/report");
+const { newFormalV2Asset, createFormalV2AssetWrapper } = require("../api/assets");
+
+const NOW = "2026-07-19T00:00:00.000Z";
+const TODAY = "2026-07-19";
+const ids = ["10000000-0000-4000-8000-000000000001","10000000-0000-4000-8000-000000000002","10000000-0000-4000-8000-000000000003","10000000-0000-4000-8000-000000000004","10000000-0000-4000-8000-000000000005","10000000-0000-4000-8000-000000000006"];
+const options = { now: NOW, today: TODAY, currency: "CNY" };
+
+function makeAsset(kind, index, extra) {
+    return newFormalV2Asset(Object.assign({ id: ids[index], kind, name: kind, tagIds: [] }, extra || {}), options);
+}
+
+const physical = makeAsset("physical", 0, { details: { warrantyEndsOn: TODAY, costGoal: null } });
+const subscription = makeAsset("virtualSubscription", 1, { details: { billingPlan: { cycle: "monthly" }, autoRenew: true, planName: "Plan", accountLabel: null } });
+const perpetual = makeAsset("virtualPerpetual", 2, { details: { licenseAccountLabel: "lic" } });
+const prepaidA = makeAsset("prepaidAmount", 3, { details: { provider: "Prov", expiresOn: null } });
+const prepaidC = makeAsset("prepaidCount", 4, { details: { provider: "Cafe", expiresOn: null } });
+// v2.6.2：退役实物资产——净额/日均只在役口径 + 退役回收（转让所得）独立聚合。
+const retiredPhysical = makeAsset("physical", 5, { status: "retired", acquiredOn: "2026-04-01", statusChangedOn: "2026-06-30", details: { warrantyEndsOn: null, costGoal: null } });
+
+const financialEvents = [];
+financialEvents.push({ id: "20000000-0000-4000-8000-000000000001", schemaVersion: 1, assetId: physical.id, occurredAt: NOW, effectiveDate: TODAY, createdAt: NOW, source: "user", correlationId: null, note: "", metadata: {}, replacesEventId: null, voidedAt: null, direction: "outflow", eventType: "purchase", currency: "CNY", amountMinor: 50000 });
+financialEvents.push({ id: "20000000-0000-4000-8000-000000000002", schemaVersion: 1, assetId: subscription.id, occurredAt: NOW, effectiveDate: TODAY, createdAt: NOW, source: "user", correlationId: null, note: "", metadata: {}, replacesEventId: null, voidedAt: null, direction: "outflow", eventType: "subscriptionPayment", currency: "CNY", amountMinor: 3000 });
+financialEvents.push({ id: "20000000-0000-4000-8000-000000000003", schemaVersion: 1, assetId: perpetual.id, occurredAt: NOW, effectiveDate: TODAY, createdAt: NOW, source: "user", correlationId: null, note: "", metadata: {}, replacesEventId: null, voidedAt: null, direction: "outflow", eventType: "purchase", currency: "CNY", amountMinor: 20000 });
+financialEvents.push({ id: "20000000-0000-4000-8000-000000000004", schemaVersion: 1, assetId: prepaidA.id, occurredAt: NOW, effectiveDate: TODAY, createdAt: NOW, source: "user", correlationId: null, note: "", metadata: {}, replacesEventId: null, voidedAt: null, direction: "outflow", eventType: "purchase", currency: "CNY", amountMinor: 5000 });
+financialEvents.push({ id: "20000000-0000-4000-8000-000000000005", schemaVersion: 1, assetId: prepaidC.id, occurredAt: NOW, effectiveDate: TODAY, createdAt: NOW, source: "user", correlationId: null, note: "", metadata: {}, replacesEventId: null, voidedAt: null, direction: "outflow", eventType: "purchase", currency: "CNY", amountMinor: 2000 });
+// 退役实物资产的购买流出与转让卖出流入（退役回收口径验证数据）。
+financialEvents.push({ id: "20000000-0000-4000-8000-000000000006", schemaVersion: 1, assetId: retiredPhysical.id, occurredAt: NOW, effectiveDate: "2026-04-01", createdAt: NOW, source: "user", correlationId: null, note: "", metadata: {}, replacesEventId: null, voidedAt: null, direction: "outflow", eventType: "purchase", currency: "CNY", amountMinor: 40000 });
+financialEvents.push({ id: "20000000-0000-4000-8000-000000000007", schemaVersion: 1, assetId: retiredPhysical.id, occurredAt: NOW, effectiveDate: "2026-06-30", createdAt: NOW, source: "user", correlationId: null, note: "", metadata: {}, replacesEventId: null, voidedAt: null, direction: "inflow", eventType: "sale", currency: "CNY", amountMinor: 30000 });
+
+const lifecycleEvents = [{ id: "30000000-0000-4000-8000-000000000001", schemaVersion: 1, assetId: physical.id, occurredAt: NOW, effectiveDate: TODAY, createdAt: NOW, source: "user", correlationId: null, note: "", replacesEventId: null, voidedAt: null, kind: "created", details: {} }];
+
+const subscriptionPeriods = [{ id: "40000000-0000-4000-8000-000000000001", schemaVersion: 1, assetId: subscription.id, occurredAt: NOW, effectiveDate: TODAY, createdAt: NOW, source: "user", correlationId: null, note: "", metadata: {}, replacesEventId: null, voidedAt: null, kind: "billing", startDate: "2026-07-01", endDate: "2026-07-31", paymentEventId: "20000000-0000-4000-8000-000000000002" }];
+
+const prepaidTransactions = [];
+prepaidTransactions.push({ id: "50000000-0000-4000-8000-000000000001", assetId: prepaidA.id, type: "opening", dimension: "amount", direction: "inflow", effectiveDate: TODAY, occurredAt: NOW, createdAt: NOW, note: "", financialEventId: "20000000-0000-4000-8000-000000000004" });
+prepaidTransactions.push({ id: "50000000-0000-4000-8000-000000000002", assetId: prepaidC.id, type: "opening", dimension: "count", direction: "inflow", count: 10, effectiveDate: TODAY, occurredAt: NOW, createdAt: NOW, note: "", financialEventId: "20000000-0000-4000-8000-000000000005" });
+prepaidTransactions.push({ id: "50000000-0000-4000-8000-000000000003", assetId: prepaidC.id, type: "outflow", dimension: "count", direction: "outflow", count: 2, effectiveDate: TODAY, occurredAt: NOW, createdAt: NOW, note: "", financialEventId: null });
+
+function buildSnapshot() {
+    return {
+        assets: createFormalV2AssetWrapper([physical, subscription, perpetual, prepaidA, prepaidC, retiredPhysical], { updatedAt: NOW }),
+        tags: { schemaVersion: 1, tags: [], updatedAt: NOW },
+        financialEvents: { schemaVersion: 1, events: financialEvents, updatedAt: NOW },
+        lifecycleEvents: { schemaVersion: 1, events: lifecycleEvents, updatedAt: NOW },
+        subscriptionPeriods: { schemaVersion: 1, records: subscriptionPeriods, updatedAt: NOW },
+        prepaidTransactions: { schemaVersion: 1, records: prepaidTransactions, updatedAt: NOW },
+        maintenance: { schemaVersion: 1, records: [], updatedAt: NOW },
+        wishlistEvents: { schemaVersion: 1, events: [], updatedAt: NOW },
+        operationLogs: { schemaVersion: 1, logs: [], updatedAt: NOW },
+        exchangeRates: { schemaVersion: 1, baseCurrency: "CNY", rates: {}, updatedAt: NOW },
+    };
+}
+
+const snapshot = buildSnapshot();
+const before = JSON.parse(JSON.stringify(snapshot));
+
+const report = buildFormalReport(snapshot, { months: 6, dateFrom: "2026-03-01", endDate: TODAY }, { now: NOW });
+
+assert.equal(report.schemaGeneration, "formal-v2");
+assert.equal(report.counts.total, 6);
+assert.deepEqual(Object.assign({}, report.counts.byKind), { physical: 2, virtualSubscription: 1, virtualPerpetual: 1, prepaidAmount: 1, prepaidCount: 1 });
+assert.deepEqual(Object.assign({}, report.counts.byStatus), { active: 5, retired: 1 });
+// recordedFinancials 保持全量口径（含退役资产）：购买流出 80000 + 退役资产购买 40000；转让流入 30000。
+assert.equal(report.amounts.recordedFinancialsByCurrency.CNY.outflowAmountMinor, 120000);
+assert.equal(report.amounts.recordedFinancialsByCurrency.CNY.inflowAmountMinor, 30000);
+// v2.6.2 只在役口径：退役资产净成本不计入总金额，5 个在役资产净额合计保持原值 80000。
+assert.equal(report.amounts.netByCurrency.CNY.netAmountMinor, 80000);
+assert.equal(report.amounts.netByCurrency.CNY.assetCount, 5);
+// v2.6.2 退役回收：退役资产转让流入独立聚合。
+assert.equal(report.amounts.retiredSaleByCurrency.CNY.saleAmountMinor, 30000);
+assert.equal(report.amounts.retiredSaleByCurrency.CNY.assetCount, 1);
+assert.equal(report.amounts.retiredSaleByCurrency.CNY.currency, "CNY");
+// v2.6.2 负向断言：现有用例恰好只有 CNY 一笔转让——在役资产与无转让退役资产不得产生幽灵 bucket。
+assert.equal(Object.keys(report.amounts.retiredSaleByCurrency).join(","), "CNY");
+assert.equal(report.prepaid.amountByCurrency.CNY.balanceAmountMinor, 5000);
+const firstAssetEntry = Object.values(report.prepaid.countByAsset)[0];
+assert.equal(firstAssetEntry.remainingCount, 8);
+assert.equal(Object.isFrozen(report), true);
+assert.equal(Object.isFrozen(report.assets[0]), true);
+assert.throws(function() { report.counts.total = 0; }, TypeError);
+assert.equal(Object.getPrototypeOf(report.counts.byKind), null);
+assert.equal(Object.getPrototypeOf(report.prepaid.countByAsset), null);
+assert.deepEqual(snapshot, before, "formal report must not mutate snapshot");
+
+// v2.6.3 订阅专属聚合：total 含退役；byState 只数在役（月付且在期 → subscribed）；
+// 累计支出 = 未作废订阅付款合计；月度支出 = 当期付款 ÷ 计费周期月数（monthly×1）。
+assert.equal(report.subscription.total, 1);
+assert.equal(report.subscription.byState.subscribed, 1);
+assert.equal(report.subscription.byState.trial, 0);
+assert.equal(report.subscription.byState.expired, 0);
+assert.equal(report.subscription.byState.pendingConfirmation, 0);
+assert.equal(report.subscription.byCurrency.CNY.currency, "CNY");
+assert.equal(report.subscription.byCurrency.CNY.paidAmountMinor, 3000);
+assert.equal(report.subscription.byCurrency.CNY.monthlyAmountMinor, 3000);
+assert.equal(report.subscription.byCurrency.CNY.activeCount, 1);
+assert.equal(report.subscription.upcomingRenewals.length, 1);
+assert.equal(report.subscription.upcomingRenewals[0].assetId, subscription.id);
+assert.equal(report.subscription.upcomingRenewals[0].date, "2026-08-01");
+assert.equal(report.subscription.upcomingRenewals[0].amountMinor, 3000);
+assert.equal(report.subscription.upcomingRenewals[0].currency, "CNY");
+
+// v2.6.3 预付扩展：金额维 charge = 期初 + 追加，consume = 消费，利用率原始比值；
+// 次数维合计；夹具 expiresOn 均为 null → 30 天内到期列表为空。
+assert.equal(report.prepaid.amountByCurrency.CNY.chargeAmountMinor, 5000);
+assert.equal(report.prepaid.amountByCurrency.CNY.consumeAmountMinor, 0);
+assert.equal(report.prepaid.amountByCurrency.CNY.utilizationRate, 0);
+assert.deepEqual(Object.assign({}, report.prepaid.countTotals), { assetCount: 1, remainingCount: 8, chargeCount: 10, consumeCount: 2 });
+assert.equal(report.prepaid.expiringWithin30Days.length, 0);
+
+const dashboard = buildFormalDashboard(snapshot, "6m", { now: NOW });
+assert.equal(dashboard.schemaGeneration, "formal-v2");
+assert.equal(dashboard.range, "6m");
+assert.equal(dashboard.composition.byKind.prepaidAmount, 1);
+assert.equal(Object.isFrozen(dashboard), true);
+
+assert.doesNotThrow(function() { buildFormalReport({ assets: [] }, { dateFrom: TODAY, endDate: TODAY }, { now: NOW }); });
+
+// v2.6.3 空快照：新增结构必须建好空桶/空数组，不得缺键。
+const emptyReport = buildFormalReport({ assets: [] }, { dateFrom: TODAY, endDate: TODAY }, { now: NOW });
+assert.equal(emptyReport.subscription.total, 0);
+assert.deepEqual(Object.assign({}, emptyReport.subscription.byState), { subscribed: 0, expired: 0, pendingConfirmation: 0, trial: 0 });
+assert.deepEqual(Object.keys(emptyReport.subscription.byCurrency), []);
+assert.deepEqual(emptyReport.subscription.upcomingRenewals, []);
+assert.deepEqual(Object.assign({}, emptyReport.prepaid.countTotals), { assetCount: 0, remainingCount: 0, chargeCount: 0, consumeCount: 0 });
+assert.deepEqual(emptyReport.prepaid.expiringWithin30Days, []);
+assert.equal(Object.isFrozen(emptyReport.subscription), true);
+
+console.log("[formal-report] passed");

@@ -1,0 +1,19 @@
+# 思源运行时（思源 app 自己装）
+node_modules/
+
+# 构建产物
+dist/
+package/
+package.zip
+
+# 临时/历史
+.history/
+.idea/
+.hotreload
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 自家产物（双保险，bazaar 不会看，但避免误提交）
+*.bak
