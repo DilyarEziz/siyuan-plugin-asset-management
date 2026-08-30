@@ -4089,6 +4089,12 @@
 .am-dashboard-summary__grid > div:first-child { padding-inline-start: 0; border-inline-start: 0; }
 .am-dashboard-summary__grid small { display: block; color: var(--am-fg-3); font-size: 11px; overflow-wrap: anywhere; }
 .am-dashboard-summary__grid strong { display: block; margin-top: 5px; color: var(--b3-theme-on-background); font-size: 20px; font-feature-settings: 'tnum'; }
+/* v2.6.3 补充：订阅分析状态格按钮化（.am-dashboard-state-hit）——继承统计格排版，
+   仅重置原生按钮外观；分隔线与 padding 与 div 格完全一致，悬停数值反馈主题色 */
+.am-dashboard-summary__grid > button.am-dashboard-state-hit { min-width: 0; padding: 0 8px; border: 0; border-inline-start: 1px solid rgba(0, 0, 0, 0.08); background: none; font: inherit; color: inherit; text-align: start; cursor: pointer; border-radius: 0; }
+.am-dashboard-summary__grid > button.am-dashboard-state-hit:first-child { padding-inline-start: 0; border-inline-start: 0; }
+.am-dashboard-state-hit:hover strong, .am-dashboard-state-hit:focus-visible strong { color: var(--b3-theme-primary); }
+.am-dashboard-state-hit:focus-visible { outline: 1px solid var(--b3-theme-primary); outline-offset: 2px; }
 .am-dashboard-composition__status { display: flex; align-items: center; gap: 14px; margin-top: 12px; }
 .am-dashboard-ring { width: 76px; height: 76px; flex: 0 0 76px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.08); }
 .am-dashboard-ring span { width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--b3-theme-surface); color: var(--b3-theme-on-background); font-size: 16px; font-weight: 600; }
@@ -4207,7 +4213,7 @@
 .am-dashboard-detail dt { color: var(--am-fg-3); }
 .am-dashboard-detail dd { margin: 0; overflow-wrap: anywhere; }
 [data-theme-mode="dark"] .am-dashboard__surface, .b3-theme-dark .am-dashboard__surface { background: rgba(255, 255, 255, 0.04); border-color: rgba(255, 255, 255, 0.1); }
-[data-theme-mode="dark"] .am-dashboard-summary__grid > div, .b3-theme-dark .am-dashboard-summary__grid > div, [data-theme-mode="dark"] .am-dashboard-asset-row, .b3-theme-dark .am-dashboard-asset-row { border-color: rgba(255, 255, 255, 0.1); }
+[data-theme-mode="dark"] .am-dashboard-summary__grid > div, .b3-theme-dark .am-dashboard-summary__grid > div, [data-theme-mode="dark"] .am-dashboard-summary__grid > button.am-dashboard-state-hit, .b3-theme-dark .am-dashboard-summary__grid > button.am-dashboard-state-hit, [data-theme-mode="dark"] .am-dashboard-asset-row, .b3-theme-dark .am-dashboard-asset-row { border-color: rgba(255, 255, 255, 0.1); }
 @media (max-width: 420px) { .am-dashboard { padding: 10px; } .am-dashboard__header { align-items: flex-start; flex-direction: column; } .am-dashboard__ranges { justify-content: flex-start; width: 100%; } .am-dashboard-summary__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 0; } .am-dashboard-summary__grid > div:nth-child(3) { padding-inline-start: 0; border-inline-start: 0; } .am-dashboard-composition__status { gap: 10px; } .am-dashboard-detail-mask { padding: 0; } .am-dashboard-detail { width: 100%; max-height: 88vh; border-radius: 8px 8px 0 0; padding-bottom: calc(16px + env(safe-area-inset-bottom, 0)); } }
 
 .am-edit-field.is-error .am-edit-field__input,
@@ -15046,8 +15052,10 @@
 .am-dashboard-analysis .am-dashboard-summary__grid,
 .am-dashboard-analysis .am-dashboard-wishlist__counts { margin-top: 10px; }
 .am-dashboard-analysis .am-dashboard-summary__grid > div,
+.am-dashboard-analysis .am-dashboard-summary__grid > button.am-dashboard-state-hit,
 .am-dashboard-analysis .am-dashboard-wishlist__counts > div { padding: 0 10px; }
 .am-dashboard-analysis .am-dashboard-summary__grid > div:first-child,
+.am-dashboard-analysis .am-dashboard-summary__grid > button.am-dashboard-state-hit:first-child,
 .am-dashboard-analysis .am-dashboard-wishlist__counts > div:nth-child(odd) { padding-inline-start: 0; }
 .am-dashboard-analysis .am-dashboard-summary__grid small,
 .am-dashboard-analysis .am-dashboard-wishlist__counts small,
@@ -15091,5 +15099,6 @@
 /* 窄屏：订阅状态三格与种草四格同为两列流，奇数格贴左去线；字阶与最小高度不变 */
 @media (max-width: 420px) {
     .am-dashboard-analysis .am-dashboard-summary__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 0; }
-    .am-dashboard-analysis .am-dashboard-summary__grid > div:nth-child(odd) { padding-inline-start: 0; border-inline-start: 0; }
+    .am-dashboard-analysis .am-dashboard-summary__grid > div:nth-child(odd),
+    .am-dashboard-analysis .am-dashboard-summary__grid > button.am-dashboard-state-hit:nth-child(odd) { padding-inline-start: 0; border-inline-start: 0; }
 }

@@ -95,7 +95,7 @@ function assertNoActiveTokens(html) {
     assert.equal(liveDataHtml.test(html), false, `live data:text/html leaked: ${html}`);
 }
 
-function main() {
+async function main() {
     // ===== Part A: 直接对 _renderAssetNotesHtml 做受控语法 / XSS 验证 =====
     const { plugin } = createHarness([]);
 
@@ -250,7 +250,9 @@ function main() {
     const physical = buildAsset('02000000-0000-4000-8000-000000000001', 'physical', '相机', '# 镜头\n- 24mm\n- 50mm');
     const { plugin: p1 } = createHarness([physical]);
     fillSidecars(p1, [purchaseEvent('00000000-0000-4000-8000-000000000101', physical.id, 12345)]);
-    p1.openFormalProductCard(physical.id);
+    // v2.6.3 测试修复：openFormalProductCard 自 v2.4 起为 async（冷缓存先 hydrate
+    // 种草事件再渲染），必须 await 后再断言，否则卡尚未挂载。
+    await p1.openFormalProductCard(physical.id);
     const card1 = p1._productCardHost && p1._productCardHost.querySelector('.am-product-card-mask .am-product-card');
     assert.ok(card1, 'physical product card rendered');
     const notes1 = card1.querySelector('.am-product-notes');
@@ -266,7 +268,7 @@ function main() {
     const sub = buildAsset('02000000-0000-4000-8000-000000000002', 'virtualSubscription', 'Pro Plan', '1. 每月 88\n2. 自动续费');
     const { plugin: p2 } = createHarness([sub]);
     fillSidecars(p2, [purchaseEvent('00000000-0000-4000-8000-000000000102', sub.id, 8800)]);
-    p2.openFormalProductCard(sub.id);
+    await p2.openFormalProductCard(sub.id);
     const card2 = p2._productCardHost && p2._productCardHost.querySelector('.am-product-card-mask .am-product-card');
     assert.ok(card2, 'subscription product card rendered');
     const notes2 = card2.querySelector('.am-product-notes');
@@ -280,7 +282,7 @@ function main() {
     const prepaid = buildAsset('02000000-0000-4000-8000-000000000003', 'prepaidAmount', 'Store Card', '## 充值说明\n\n一次充 500 起');
     const { plugin: p3 } = createHarness([prepaid]);
     fillSidecars(p3, [purchaseEvent('00000000-0000-4000-8000-000000000103', prepaid.id, 50000)]);
-    p3.openFormalProductCard(prepaid.id);
+    await p3.openFormalProductCard(prepaid.id);
     const card3 = p3._productCardHost && p3._productCardHost.querySelector('.am-product-card-mask .am-product-card');
     assert.ok(card3, 'prepaid product card rendered');
     const notes3 = card3.querySelector('.am-product-notes');
@@ -294,7 +296,7 @@ function main() {
     const empty = buildAsset('02000000-0000-4000-8000-000000000004', 'physical', '空', '');
     const { plugin: p4 } = createHarness([empty]);
     fillSidecars(p4, [purchaseEvent('00000000-0000-4000-8000-000000000104', empty.id, 1000)]);
-    p4.openFormalProductCard(empty.id);
+    await p4.openFormalProductCard(empty.id);
     const card4 = p4._productCardHost && p4._productCardHost.querySelector('.am-product-card-mask .am-product-card');
     assert.ok(card4, 'empty-notes product card rendered');
     const section4 = card4.querySelector('.am-product-section--notes');
@@ -304,7 +306,7 @@ function main() {
     const blank = buildAsset('02000000-0000-4000-8000-000000000005', 'physical', '空白', '   \n  \t \n');
     const { plugin: p5 } = createHarness([blank]);
     fillSidecars(p5, [purchaseEvent('00000000-0000-4000-8000-000000000105', blank.id, 1000)]);
-    p5.openFormalProductCard(blank.id);
+    await p5.openFormalProductCard(blank.id);
     const card5 = p5._productCardHost && p5._productCardHost.querySelector('.am-product-card-mask .am-product-card');
     assert.equal(card5.querySelector('.am-product-section--notes'), null, 'whitespace notes must not produce a section');
 
@@ -313,7 +315,7 @@ function main() {
         '<script>alert(1)</script><img src=x onerror=alert(2)><a href="javascript:alert(3)">x</a>');
     const { plugin: p6 } = createHarness([xssAsset]);
     fillSidecars(p6, [purchaseEvent('00000000-0000-4000-8000-000000000106', xssAsset.id, 1000)]);
-    p6.openFormalProductCard(xssAsset.id);
+    await p6.openFormalProductCard(xssAsset.id);
     const card6 = p6._productCardHost && p6._productCardHost.querySelector('.am-product-card-mask .am-product-card');
     const html6 = card6.querySelector('.am-product-notes').innerHTML;
     assertNoActiveTokens(html6);
@@ -355,4 +357,4 @@ function main() {
     });
 }
 
-try { main(); } catch (error) { console.error('[notes-markdown-render] failed:', error); process.exit(1); }
+(async () => { await main(); })().catch(error => { console.error('[notes-markdown-render] failed:', error); process.exit(1); });

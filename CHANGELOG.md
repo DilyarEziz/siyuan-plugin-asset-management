@@ -10,11 +10,14 @@
 
 - 新增：报表新增「订阅分析」——订阅中 / 试用 / 已停订数量、月度支出（按账单周期折算）、累计支出，以及未来 30 天内续费的订阅清单与金额。
 - 新增：报表新增「预付分析」——总余额与剩余次数、累计充值与消费、使用率，以及未来 30 天内到期的预付清单。
+- 新增：次数类预付资产的花费计入「预付分析」——购买与充值实付计入累计充值，已用次数按比例摊销为累计消费，余额与剩余次数保持一致。
+- 新增：「订阅分析」的订阅中 / 试用 / 已停订数字可点击，弹窗列出对应状态的全部订阅产品，点进即可查看详情。
 - 改进：「订阅分析」「预付分析」「种草转化」合并为报表页的一张分析卡片，通过卡片顶部的「订阅 / 预付 / 种草」按钮切换查看，报表更紧凑；三个视图排版统一。
 - 改进：仅有对应资产时才出现对应按钮——有订阅资产才显示「订阅」，有预付资产才显示「预付」；「种草」始终显示，不影响现有报表内容。
 - 新增：设置中的汇率支持自动更新——打开应用时，若距上次更新超过 24 小时，自动获取美元、欧元、英镑兑人民币的最新汇率；可在设置中随时关闭自动更新。
 - 新增：汇率区域展示当前汇率、更新来源（自动更新 / 手动设置）与最近刷新时间，并提供「立即刷新」。
 - 新增：手动修正汇率支持美元、欧元、英镑三种货币；手动修正后自动更新不会覆盖，想改回自动可使用「恢复自动汇率」。
+- 修复：图标选择器「数字服务」分类下的 5 张预设图标此前无法显示，现已正常展示。
 - 构建：版本号升至 `2.6.3`（合并原 2.6.3 与 2.6.4 两个批次），同步更新双语 README、构建产物和发布包。
 
 ### v2.6.2
@@ -279,11 +282,14 @@
 
 - New: the report gains a "Subscription analysis" view — the number of subscribed, trial, and stopped subscriptions, monthly spending (normalized by billing cycle), total spent so far, and the subscriptions renewing within the next 30 days with their amounts.
 - New: the report gains a "Prepaid analysis" view — total balance and remaining uses, total topped up and consumed, usage rate, and the prepaid assets expiring within the next 30 days.
+- New: spending on count-based prepaid assets now flows into "Prepaid analysis" — purchases and paid top-ups count toward the total topped up, used portions are amortized into consumption, and the balance stays consistent with the remaining uses.
+- New: the subscribed / trial / stopped numbers in "Subscription analysis" are now clickable — a popup lists all subscriptions in that state, and tapping one opens its details.
 - Improved: "Subscription analysis", "Prepaid analysis", and "Wishlist conversion" are now combined into a single analysis card on the report page — switch between them with the "Subscriptions / Prepaid / Wishlist" buttons at the top of the card, keeping the report more compact, with all three views sharing a unified layout.
 - Improved: each button appears only when you have the matching assets — "Subscriptions" requires subscription assets and "Prepaid" requires prepaid assets — while "Wishlist" is always shown, leaving the rest of the report untouched.
 - New: exchange rates in Settings can now update automatically — when the app opens and more than 24 hours have passed since the last update, it automatically fetches the latest US dollar, euro, and British pound to Chinese yuan rates. Automatic updates can be switched off at any time in Settings.
 - New: the exchange-rate area shows the current rates, their source (automatic update or manual setting), and the last refresh time, together with a "Refresh now" button.
 - New: manual rate adjustments cover the US dollar, euro, and British pound; after a manual adjustment, automatic updates will not overwrite it — use "Restore automatic rates" to switch back at any time.
+- Fixed: the 5 preset icons in the "Service" category of the icon picker were not showing; they now display correctly.
 - Build: version bumped to `2.6.3` (merging the former 2.6.3 and 2.6.4 batches); bilingual READMEs, build artifacts, and the release package are synchronized.
 
 ### v2.6.2

@@ -376,6 +376,8 @@ function buildFormalReport(snapshot, filterInput, options) {
         },
         rankings: { byCurrency: createDict() },
         prepaid: {
+            // amountByCurrency：金额维逐币种聚合；v2.6.3 起次数维实付（购买/充值
+            // 实付-退款，消费按次数占比摊销）也并入本桶对应币种，保证次数卡有钱可看。
             amountByCurrency: createDict(),
             countByAsset: createDict(),
             // v2.6.3：次数维卡合计；charge = 期初 + 追加，consume = 消费。
@@ -510,6 +512,37 @@ function buildFormalReport(snapshot, filterInput, options) {
             report.prepaid.countTotals.chargeCount = safeAddFormal(report.prepaid.countTotals.chargeCount,
                 safeAddFormal(card.prepaid.openingCount, card.prepaid.inflowCount, 'prepaid.countTotals.chargeCount'), 'prepaid.countTotals.chargeCount');
             report.prepaid.countTotals.consumeCount = safeAddFormal(report.prepaid.countTotals.consumeCount, card.prepaid.outflowCount, 'prepaid.countTotals.consumeCount');
+            // v2.6.3 次数维实付金额：次数卡的购买价与充值实付同样是钱，必须进预付
+            // 分析。实付 = 该卡 prepaidTransactions 关联财务事件中的现金流出合计
+            //（PURCHASE / PREPAID_CHARGE）减退款流入；非现金事件（affectsCash=false）
+            // 不计。消费按「实付 × 已用次数 ÷ 总授予次数」摊销，余额 = 实付 - 摊销
+            // 消费，与次数口径自洽。只并金额三兄弟字段，不动 assetCount/transactionCount。
+            const countLinkedEventIds = new Set(sidecars.prepaidTransactions
+                .filter(record => record && record.assetId === card.id && record.financialEventId != null)
+                .map(record => record.financialEventId));
+            let countCashMinor = 0;
+            if (countLinkedEventIds.size) {
+                sidecars.financialEvents.forEach(event => {
+                    if (!event || event.assetId !== card.id || event.voidedAt || !countLinkedEventIds.has(event.id)) return;
+                    if (event.metadata && event.metadata.affectsCash === false) return;
+                    if (event.direction === FINANCIAL_DIRECTION.OUTFLOW) countCashMinor = safeAddFormal(countCashMinor, event.amountMinor, 'prepaid.countCashOutflow');
+                    else if (event.direction === FINANCIAL_DIRECTION.INFLOW) countCashMinor = safeAddFormal(countCashMinor, -event.amountMinor, 'prepaid.countCashRefund');
+                });
+            }
+            if (countCashMinor > 0) {
+                if (!hasOwn(report.prepaid.amountByCurrency, card.currency)) {
+                    report.prepaid.amountByCurrency[card.currency] = { currency: card.currency, balanceAmountMinor: 0, assetCount: 0, transactionCount: 0, chargeAmountMinor: 0, consumeAmountMinor: 0 };
+                }
+                const countMoneyBucket = report.prepaid.amountByCurrency[card.currency];
+                const countGranted = safeAddFormal(
+                    safeAddFormal(card.prepaid.openingCount, card.prepaid.inflowCount, 'prepaid.countGranted'),
+                    Math.max(0, Number(card.prepaid.adjustCount) || 0), 'prepaid.countGranted');
+                const countUsed = Math.min(Math.max(0, Number(card.prepaid.outflowCount) || 0), countGranted);
+                const countConsumedMinor = countGranted > 0 ? Math.round(countCashMinor * countUsed / countGranted) : 0;
+                countMoneyBucket.chargeAmountMinor = safeAddFormal(countMoneyBucket.chargeAmountMinor, countCashMinor, 'prepaid.chargeAmountMinor');
+                countMoneyBucket.consumeAmountMinor = safeAddFormal(countMoneyBucket.consumeAmountMinor, countConsumedMinor, 'prepaid.consumeAmountMinor');
+                countMoneyBucket.balanceAmountMinor = safeAddFormal(countMoneyBucket.balanceAmountMinor, countCashMinor - countConsumedMinor, 'prepaid.balanceAmountMinor');
+            }
         }
 
         const expiry = formalRiskEntry(card, card.nextImportant && card.nextImportant.date, reference);

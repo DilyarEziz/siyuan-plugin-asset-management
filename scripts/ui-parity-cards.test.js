@@ -45,7 +45,19 @@ function main() {
     document.body.appendChild(list);
     assert.equal(list.querySelectorAll('.am-asset-item').length, 5, 'list keeps one rich card for every formal kind');
     assert.ok(list.querySelector('.am-formal-card'), 'formal adapter renders cards');
-    assert.match(list.textContent, /正式投影不可用/, 'formal VM renders a stable error card when its full projection is unavailable');
+    // 域快照完整有效时：5 张卡全部正常渲染，无错误卡（正面路径）。
+    assert.equal(list.querySelectorAll('.am-formal-sidecar-error').length, 0, 'valid domain renders without error cards');
+
+    // 原断言依赖旧版“快照隐式缺失即报错”的行为；现测试夹具注入完整快照后卡片
+    // 正常渲染。改为显式破坏快照，验证投影失败仍回落稳定错误卡（原意图不变）。
+    const validSnapshot = plugin._formalDomainStateSnapshot;
+    plugin._formalDomainStateSnapshot = Object.assign({}, validSnapshot, { financialEvents: 'not-an-array' });
+    const broken = document.createElement('div');
+    broken.innerHTML = plugin.renderFormalAssetCollection(assets);
+    document.body.appendChild(broken);
+    assert.equal(broken.querySelectorAll('.am-formal-sidecar-error').length, 5, 'every card degrades to the stable error card');
+    assert.match(broken.textContent, /正式投影不可用/, 'formal VM renders a stable error card when its full projection is unavailable');
+    plugin._formalDomainStateSnapshot = validSnapshot;
 
     plugin.settings.viewMode = 'matrix';
     const matrix = document.createElement('div');
@@ -53,8 +65,12 @@ function main() {
     document.body.appendChild(matrix);
     assert.equal(matrix.querySelectorAll('.am-asset-matrix').length, 5, 'matrix keeps one rich card for every formal kind');
 
-    plugin._financialEvents = [{ assetId: IDS[1] }];
+    // v2.6.3 测试修复：投影统一读 _formalDomainStateSnapshot 域快照，直接改
+    // plugin._financialEvents 不再影响渲染。注入坏快照（坏财务事件）验证 sidecar
+    // 投影失败仍是稳定可见的错误卡。
+    plugin._formalDomainStateSnapshot = Object.assign({}, validSnapshot, { financialEvents: [{ assetId: IDS[1] }] });
     assert.match(plugin.renderFormalAssetListCard(assets[1]), /am-formal-sidecar-error/, 'sidecar projection failure is stable and visible');
+    plugin._formalDomainStateSnapshot = validSnapshot;
     console.log('[ui-parity-cards] passed');
 }
 

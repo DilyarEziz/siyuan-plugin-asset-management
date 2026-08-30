@@ -176,11 +176,16 @@ async function main() {
 
     plugin.openWishlistFormalSheet(); mask = Array.from(document.querySelectorAll('.am-edit-sheet-mask')).pop();
     assert.ok(mask.classList.contains('am-wishlist-sheet') || mask.querySelector('.am-wishlist-sheet'));
-    wireForms(mask); form = mask.querySelector('form'); form.checkValidity = () => false; form.reportValidity = () => { form.reported = true; };
+    wireForms(mask); form = mask.querySelector('form'); form.checkValidity = () => false;
     let mutations = 0; plugin.addAsset = async () => { mutations += 1; };
+    // v2.6.3 测试修复：生产代码已用「样式化必填提示 + toast」取代原生 reportValidity
+    // （避免原生气泡遮挡表单）。契约改为：表单保持打开、不提交、出现 is-error 标记。
+    const toastsBefore = plugin.toasts.length;
     await form.onsubmit({ preventDefault() {}, currentTarget: form });
-    assert.equal(form.reported, true, 'invalid native form remains open and reports validity');
     assert.equal(mutations, 0, 'invalid sheet cannot mutate');
+    assert.ok(mask.isConnected, 'invalid native form remains open');
+    assert.ok(form.querySelector('.is-error'), 'invalid form surfaces the styled required-field error');
+    assert.ok(plugin.toasts.length > toastsBefore, 'invalid form shows the required-field hint toast');
     await assertSingleFlightSheet('physical', FORMAL_ASSET_KIND.PHYSICAL);
     await assertSingleFlightSheet('virtual', FORMAL_ASSET_KIND.VIRTUAL_SUBSCRIPTION);
     await assertSingleFlightSheet('prepaid', FORMAL_ASSET_KIND.PREPAID_AMOUNT);

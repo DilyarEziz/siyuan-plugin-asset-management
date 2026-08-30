@@ -76,7 +76,9 @@ assert.equal(report.amounts.retiredSaleByCurrency.CNY.assetCount, 1);
 assert.equal(report.amounts.retiredSaleByCurrency.CNY.currency, "CNY");
 // v2.6.2 负向断言：现有用例恰好只有 CNY 一笔转让——在役资产与无转让退役资产不得产生幽灵 bucket。
 assert.equal(Object.keys(report.amounts.retiredSaleByCurrency).join(","), "CNY");
-assert.equal(report.prepaid.amountByCurrency.CNY.balanceAmountMinor, 5000);
+// v2.6.3 次数维实付金额并入金额桶：次数卡 ¥2000 买 10 次、已用 2 次 → 摊销消费
+// 400、余额 1600；金额卡余额 5000 不变。桶值 = 金额卡 + 次数卡（摊销口径）。
+assert.equal(report.prepaid.amountByCurrency.CNY.balanceAmountMinor, 6600);
 const firstAssetEntry = Object.values(report.prepaid.countByAsset)[0];
 assert.equal(firstAssetEntry.remainingCount, 8);
 assert.equal(Object.isFrozen(report), true);
@@ -105,9 +107,11 @@ assert.equal(report.subscription.upcomingRenewals[0].currency, "CNY");
 
 // v2.6.3 预付扩展：金额维 charge = 期初 + 追加，consume = 消费，利用率原始比值；
 // 次数维合计；夹具 expiresOn 均为 null → 30 天内到期列表为空。
-assert.equal(report.prepaid.amountByCurrency.CNY.chargeAmountMinor, 5000);
-assert.equal(report.prepaid.amountByCurrency.CNY.consumeAmountMinor, 0);
-assert.equal(report.prepaid.amountByCurrency.CNY.utilizationRate, 0);
+// v2.6.3 次数维实付：charge 7000 = 金额卡 5000 + 次数卡购买 2000；
+// consume 400 = 次数卡摊销（2000 × 2/10）；utilization = 400/7000。
+assert.equal(report.prepaid.amountByCurrency.CNY.chargeAmountMinor, 7000);
+assert.equal(report.prepaid.amountByCurrency.CNY.consumeAmountMinor, 400);
+assert.equal(Math.abs(report.prepaid.amountByCurrency.CNY.utilizationRate - 400 / 7000) < 1e-9, true);
 assert.deepEqual(Object.assign({}, report.prepaid.countTotals), { assetCount: 1, remainingCount: 8, chargeCount: 10, consumeCount: 2 });
 assert.equal(report.prepaid.expiringWithin30Days.length, 0);
 

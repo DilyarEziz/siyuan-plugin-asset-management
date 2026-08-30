@@ -777,7 +777,11 @@ function testStaticAssertions() {
     assert.ok(kernel.includes('__am_agent_actions'), 'kernel.js inlines agent-actions IIFE');
     const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'plugin.json'), 'utf8'));
     assert.deepEqual(pkg.kernels, ['all'], 'plugin.json declares kernel plugin');
-    assert.equal(pkg.version, '2.6.0');
+    // 版本一致性改为动态断言：plugin.json 必须与 src.template.js 的 PLUGIN_VERSION
+    // 常量一致（三处一致规则的机器检查），避免每次发版都让本测试过期。
+    const templateVersion = (template.match(/PLUGIN_VERSION\s*=\s*['"]([^'"]+)['"]/) || [])[1];
+    assert.ok(templateVersion, 'PLUGIN_VERSION constant must exist in src.template.js');
+    assert.equal(pkg.version, templateVersion);
 }
 
 (async () => {

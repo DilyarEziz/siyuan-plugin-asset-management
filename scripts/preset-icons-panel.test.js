@@ -39,8 +39,10 @@ async function testManifestLoadStates(AssetPlugin) {
         const [first, second] = await Promise.all([plugin.loadPresetIconManifest(), plugin.loadPresetIconManifest()]);
         assert.equal(fetchCalls, 1, 'concurrent manifest loads must share one local request');
         assert.equal(plugin._presetIconManifestState, 'ready');
-        assert.equal(first.icons.length, 19);
-        assert.equal(second.categories.length, 4);
+        // 数量不硬编码（图标库会扩充）：与 manifest 实际内容对齐即可，
+        // manifest 与目录的一致性由 preset-icons-manifest.test.js 专项保证。
+        assert.equal(first.icons.length, manifest.icons.length);
+        assert.equal(second.categories.length, manifest.categories.length);
 
         const failedPlugin = new AssetPlugin({});
         global.fetch = async () => ({ ok: false });

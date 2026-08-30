@@ -4690,7 +4690,10 @@ const bindDropdownEvents = () => {
             const amountText = amount > 0 && entry.currency ? ` · ${formatAmountMinor(amount, entry.currency)}` : '';
             return `<button type="button" class="am-dashboard-asset-row" data-action="card" data-id="${escapeHtml(entry.assetId || '')}"><span>${escapeHtml(name)}</span><strong>${escapeHtml(entry.date || '')}${amountText}</strong></button>`;
         }).join('');
-        return `<div class="am-dashboard-analysis__body am-dashboard-subscription"><div class="am-dashboard-summary__grid"><div><small>${escapeHtml(this._t('dashboardSubscriptionStateSubscribed', '订阅中'))}</small><strong>${Number(subscriptionState.subscribed) || 0}</strong></div><div><small>${escapeHtml(this._t('dashboardSubscriptionStateTrial', '试用中'))}</small><strong>${Number(subscriptionState.trial) || 0}</strong></div><div><small>${escapeHtml(this._t('dashboardSubscriptionStateStopped', '已停订'))}</small><strong>${subscriptionStopped}</strong></div></div><div class="am-dashboard-summary__line"><small>${escapeHtml(this._t('dashboardSubscriptionMonthly', '月度支出'))}</small><strong>${subscriptionMonthlyText}</strong><i>${escapeHtml(this._t('dashboardSubscriptionPerMonth', '/月'))}</i></div><div class="am-dashboard-summary__line"><small>${escapeHtml(this._t('dashboardSubscriptionPaid', '累计支出'))}</small><strong>${subscriptionPaidText}</strong></div>${subscriptionRenewals.length ? `<div class="am-dashboard-analysis__subhead">${escapeHtml(this._t('dashboardSubscriptionRenewals', '30 天内续费'))}</div><div class="am-dashboard-list">${subscriptionRenewalRows}</div>` : ''}</div>`;
+        // v2.6.3 补充：状态三格改为可点击按钮，点击弹对应状态订阅产品清单
+        //（复用 _openReportBreakdown 弹层；口径与 byState 分桶一致：试用优先）。
+        const subscriptionStateCell = (stateKey, label, count) => `<button type="button" class="am-dashboard-state-hit" data-action="report-sub-state" data-state="${stateKey}" title="${escapeHtml(this._t('dashboardBarTapHint', '点击查看明细'))}"><small>${escapeHtml(label)}</small><strong>${count}</strong></button>`;
+        return `<div class="am-dashboard-analysis__body am-dashboard-subscription"><div class="am-dashboard-summary__grid">${subscriptionStateCell('subscribed', this._t('dashboardSubscriptionStateSubscribed', '订阅中'), Number(subscriptionState.subscribed) || 0)}${subscriptionStateCell('trial', this._t('dashboardSubscriptionStateTrial', '试用中'), Number(subscriptionState.trial) || 0)}${subscriptionStateCell('stopped', this._t('dashboardSubscriptionStateStopped', '已停订'), subscriptionStopped)}</div><div class="am-dashboard-summary__line"><small>${escapeHtml(this._t('dashboardSubscriptionMonthly', '月度支出'))}</small><strong>${subscriptionMonthlyText}</strong><i>${escapeHtml(this._t('dashboardSubscriptionPerMonth', '/月'))}</i></div><div class="am-dashboard-summary__line"><small>${escapeHtml(this._t('dashboardSubscriptionPaid', '累计支出'))}</small><strong>${subscriptionPaidText}</strong></div>${subscriptionRenewals.length ? `<div class="am-dashboard-analysis__subhead">${escapeHtml(this._t('dashboardSubscriptionRenewals', '30 天内续费'))}</div><div class="am-dashboard-list">${subscriptionRenewalRows}</div>` : ''}</div>`;
     }
 
     // 预付块 body：总余额（次数维剩余次数随行）+ 累计充值 + 累计消费 + 使用率
@@ -5056,16 +5059,43 @@ const snapshot = this._formalDomainStateSnapshot || {
         } else if (opts && opts.kind) {
             title = this._formalKindLabel(opts.kind);
             list = cards.filter(card => card.kind === opts.kind);
+        } else if (opts && opts.subscriptionState) {
+            // v2.6.3 补充：订阅分析状态清单。分桶口径与报表 byState 完全一致
+            //（只在役订阅卡；试用优先于状态；已停订 = expired + pendingConfirmation）。
+            const stateTitles = {
+                subscribed: this._t('dashboardSubscriptionStateSubscribed', '订阅中'),
+                trial: this._t('dashboardSubscriptionStateTrial', '试用中'),
+                stopped: this._t('dashboardSubscriptionStateStopped', '已停订'),
+            };
+            title = stateTitles[opts.subscriptionState] || this._t('dashboardSubscriptionTitle', '订阅分析');
+            list = cards.filter(card => {
+                if (card.kind !== FORMAL_ASSET_KIND.VIRTUAL_SUBSCRIPTION || !card.subscription) return false;
+                if (card.status !== 'active') return false;
+                if (opts.subscriptionState === 'trial') return !!card.subscription.isTrial;
+                if (card.subscription.isTrial) return false;
+                if (opts.subscriptionState === 'stopped') return card.subscription.state === 'expired' || card.subscription.state === 'pendingConfirmation';
+                return card.subscription.state === 'subscribed';
+            });
         } else { return; }
-        const rows = list.map(card => ({
-            id: card.id,
-            name: card.name,
-            currency: card.currency || 'CNY',
-            acq: (card.financials && card.financials.acquisitionAmountMinor != null) ? card.financials.acquisitionAmountMinor : 0,
-            cny: this._reportMinorToCny(card.financials && card.financials.acquisitionAmountMinor, card.currency, rates),
-        })).sort((a, b) => b.cny - a.cny);
+        const isSubscriptionList = !!opts.subscriptionState;
+        const rows = isSubscriptionList
+            ? list.map(card => ({
+                id: card.id,
+                name: card.name,
+                date: card.subscription ? (card.subscription.plannedRenewalDate
+                    || (card.subscription.currentPeriod && card.subscription.currentPeriod.endDate)
+                    || (card.subscription.latestPeriod && card.subscription.latestPeriod.endDate)
+                    || '') : '',
+            }))
+            : list.map(card => ({
+                id: card.id,
+                name: card.name,
+                currency: card.currency || 'CNY',
+                acq: (card.financials && card.financials.acquisitionAmountMinor != null) ? card.financials.acquisitionAmountMinor : 0,
+                cny: this._reportMinorToCny(card.financials && card.financials.acquisitionAmountMinor, card.currency, rates),
+            })).sort((a, b) => b.cny - a.cny);
         const rowsHtml = rows.length
-            ? rows.map(r => `<button type="button" class="am-dashboard-asset-row" data-breakdown-card="${escapeHtml(r.id)}"><span>${escapeHtml(r.name)}</span><strong>${formatAmountMinor(r.acq, r.currency)}${this._cnyApproxHtml(r.acq, r.currency)}</strong></button>`).join('')
+            ? rows.map(r => `<button type="button" class="am-dashboard-asset-row" data-breakdown-card="${escapeHtml(r.id)}"><span>${escapeHtml(r.name)}</span><strong>${isSubscriptionList ? escapeHtml(r.date || '—') : formatAmountMinor(r.acq, r.currency) + this._cnyApproxHtml(r.acq, r.currency)}</strong></button>`).join('')
             : `<div class="am-events-empty">${escapeHtml(this._t('dashboardBreakdownEmpty', '暂无资产'))}</div>`;
         const mask = document.createElement('div');
         mask.className = 'am-report-breakdown-mask';
@@ -5626,6 +5656,10 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
             case "tab-add": this.openActionSheet(); break;
             case "dashboard-kind": this._openReportBreakdown({ kind: target.dataset.kind }); break;
             case "dashboard-tag": this._openReportBreakdown({ tagId: target.dataset.tag }); break;
+            case "report-sub-state":
+                // v2.6.3 补充：订阅分析状态格点击 → 对应状态订阅产品清单弹层。
+                this._openReportBreakdown({ subscriptionState: target.dataset.state });
+                break;
             case "report-analysis-tab": {
                 // v2.6.3 补充：报表合并分析卡 tab 切换。只接受枚举内且当轮渲染可用
                 // 的区块（可用集由 renderReportPage 缓存）；刷新方式同 dashboard-time。
@@ -11854,6 +11888,9 @@ return {
             { id: 'digital', cats: ['digital'] },
             { id: 'appliance', cats: ['appliance'] },
             { id: 'virtual', cats: ['virtual'] },
+            // v2.6.3 修复：manifest v5 已含 service 分类（AI/图表/云/数据/报表 5 张），
+            // 漏加本组导致这批图标在图标选择器中不可见（preset-icons-panel 测试捕获）。
+            { id: 'service', cats: ['service'] },
             { id: 'general', cats: ['general'] },
         ];
         const iconsByCat = new Map();

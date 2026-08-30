@@ -13,7 +13,9 @@ const PLUGIN_ROOT = '/plugins/siyuan-plugin-asset-management/assets/preset-icons
 function main() {
     const manifest = JSON.parse(fs.readFileSync(MANIFEST_FILE, 'utf8'));
     assert.equal(manifest.version, 5);
-    assert.equal(manifest.icons.length, 19, 'manifest must contain the nineteen bundled Icons8 presets');
+    // 图标数量不硬编码（历史 19 张已扩到 33 张）：manifest 必须与目录内 PNG 一一对应。
+    const bundledPngFiles = fs.readdirSync(PRESET_ICON_DIR).filter(file => file.endsWith('.png'));
+    assert.equal(manifest.icons.length, bundledPngFiles.length, 'manifest must cover every bundled PNG preset');
     assert.deepEqual(manifest.source, {
         name: 'Icons8', provider: 'Icons8', url: 'https://icons8.com',
     });

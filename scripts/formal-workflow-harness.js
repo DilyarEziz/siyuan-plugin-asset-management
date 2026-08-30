@@ -46,6 +46,18 @@ function wireForms(root) {
         Object.defineProperty(form, 'elements', { value: elements, configurable: true });
         form.checkValidity = () => true;
         form.reportValidity = () => {};
+        // linkedom 的 css-select 编译不了 :invalid 伪类（浏览器标准，生产代码正常使用）。
+        // 忠实模拟浏览器语义：表单 checkValidity()=false 时 :invalid 命中首个命名控件，
+        // 否则无命中返回 null。harness 通过 stub checkValidity 控制校验结果。
+        const nativeQuery = form.querySelector.bind(form);
+        form.querySelector = selector => {
+            if (String(selector) === ':invalid') {
+                const formValid = typeof form.checkValidity === 'function' ? form.checkValidity() : true;
+                if (formValid) return null;
+                return nativeQuery('[name]') || null;
+            }
+            return nativeQuery(selector);
+        };
     });
 }
 
