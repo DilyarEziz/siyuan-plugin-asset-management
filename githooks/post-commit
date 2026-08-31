@@ -1,0 +1,13 @@
+#!/bin/sh
+# 提交即推：commit 成功后自动推送到远端；推送失败不影响提交本身。
+# detached HEAD（如 rebase 进行中）时静默跳过，避免推送中间态。
+branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null)" || exit 0
+if git push origin "HEAD:$branch" 2>/dev/null; then
+  echo "✅ 已自动推送 origin/$branch"
+else
+  echo ""
+  echo "⚠️  自动推送失败（可能离线 / 凭据过期 / 远端有新提交）"
+  echo "   本地提交已完成。恢复后请执行：git pull --rebase && git push"
+  echo ""
+fi
+exit 0
