@@ -6,6 +6,13 @@ Asset Management is a personal asset keeper that lives in your SiYuan Note sideb
 
 ## Changelog
 
+### v2.6.4
+
+**Filter memory and subscription monthly spending fix**
+
+- Improved: the asset page now remembers the filters you last chose — status, type, sort, and tags — and restores them the next time you open the plugin; for example, if you filtered by "Active", it stays on "Active" next time.
+- Fixed: monthly spending in the report's "Subscription analysis" no longer disagrees with the daily average — it is now converted by the actual length of the current subscription period, matching the daily average; a subscription costing about 0.55 yuan per day now shows roughly 16.7 yuan per month instead of a doubled figure.
+
 ### v2.6.3
 
 **Report analysis card + automatic exchange rate updates**
@@ -31,16 +38,6 @@ Asset Management is a personal asset keeper that lives in your SiYuan Note sideb
 - Fixed: when a new asset was set to retired right at creation, its sale price was silently discarded; it is now recorded correctly as recovery income.
 - Fixed: when editing a retired asset, the sale price is now filled in automatically, and changing it is saved as a new recovery record.
 - Improved: asset list cards drop the extra padding above and below, so the list's top and bottom edges are no longer too wide.
-
-### v2.6.1
-
-**Wishlist journey, note link directions, and form polish**
-
-- New: product cards show the wishlist date; purchased assets show the wishlist date, heartbeat count, and purchase date when available.
-- New: reports expose wishlist conversion metrics for total wishes, active wishes, purchases, abandons, purchase rate, and abandon rate without changing owned-asset totals.
-- New: note links distinguish notes referenced by an asset from notes that reference an asset.
-- Improved: wishlist conversion metrics use a compact two-column layout that also works on narrow panels.
-- Improved: browser validation bubbles are disabled in favor of field-specific inline messages such as `Please enter a name`, cleared automatically once the field is valid.
 
 > For the full changelog, see [CHANGELOG.md](./CHANGELOG.md).
 

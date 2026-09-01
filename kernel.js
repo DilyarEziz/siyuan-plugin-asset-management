@@ -2937,7 +2937,13 @@ function buildFormalReport(snapshot, filterInput, options) {
         if (stateKey) report.subscription.byState[stateKey] = safeAddFormal(report.subscription.byState[stateKey], 1, 'subscription.byState.' + stateKey);
         const periodAmount = periodPaymentAmountMinor(card.subscription.currentPeriod);
         if (periodAmount > 0) {
-            const monthly = Math.round(periodAmount / billingCycleMonths(entry.asset));
+            const period = card.subscription.currentPeriod;
+            const periodStart = parseRecordedDate(period.startDate);
+            const periodEnd = parseRecordedDate(period.endDate);
+            const periodDays = periodStart && periodEnd ? Math.floor((periodEnd.getTime() - periodStart.getTime()) / 86400000) + 1 : 0;
+            const monthly = periodDays > 0
+                ? Math.round(periodAmount / periodDays * 30.4375)
+                : Math.round(periodAmount / billingCycleMonths(entry.asset));
             currencyBucket.monthlyAmountMinor = safeAddFormal(currencyBucket.monthlyAmountMinor, monthly, 'subscription.monthlyAmountMinor');
         }
     });

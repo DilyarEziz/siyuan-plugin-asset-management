@@ -1,10 +1,21 @@
 /* eslint-disable no-undef */
 /**
- * SiYuan 资产管理插件 v2.6.3 — 主模板（不带 IIFE）
+ * SiYuan 资产管理插件 v2.6.4 — 主模板（不带 IIFE）
  *
  * 通过 scripts/concat.js 把 api/*.js 拼接在顶部，生成单文件 index.js。
  *
- * 功能（v0.14.0 + v0.15-T6 + v0.16-T1 / T3 / T5 / T6 / T7 + v0.17-T1-β / T1-γ / T1-δ + v0.17-Hotfix-A + v0.17-T3-α / T3-β + v1.1.0 + v1.2.0 + v1.3.0 + v1.4.0 + v1.5.0 + v1.6.0 + v1.7.0 + v2.3.0 + v2.4.0 + v2.4.1 + v2.4.2 + v2.5.0 + v2.6.0 + v2.6.1 + v2.6.3）：
+ * 功能（v0.14.0 + v0.15-T6 + v0.16-T1 / T3 / T5 / T6 / T7 + v0.17-T1-β / T1-γ / T1-δ + v0.17-Hotfix-A + v0.17-T3-α / T3-β + v1.1.0 + v1.2.0 + v1.3.0 + v1.4.0 + v1.5.0 + v1.6.0 + v1.7.0 + v2.3.0 + v2.4.0 + v2.4.1 + v2.4.2 + v2.5.0 + v2.6.0 + v2.6.1 + v2.6.3 + v2.6.4）：
+ *
+ * v2.6.4（首页筛选记忆 + 订阅月度支出口径修复）：
+ *   - 首页筛选记忆：手动改动状态 / 类型 / 排序 / 标签筛选后把快照写入
+ *       settings.rememberedFilters 并立即保存；启动时优先恢复上次筛选快照，
+ *       无记忆值回落设置页默认（defaultSort / defaultStatus）；设置保存与
+ *       默认排序变更同步刷新记忆快照；备份 / 导入随 settings 往返
+ *       （api/storage.js 新增快照归一 + settings 白名单键，存量缺键回落默认）
+ *   - 报表「订阅分析」月度支出口径修复：按当期订阅周期的实际天数折算
+ *       （当期金额 / 实际天数 × 月均天数），不再受名义账单周期影响；
+ *       无覆盖当日的当期周期时贡献 0（api/report.js 聚合口径修改）
+ *   - scripts/formal-report.test.js 新增月度折算回归用例
  *
  * v2.6.3（报表分析卡片 + 汇率自动更新）：
  *   - 报表页新增「订阅分析」：订阅中 / 试用中 / 已停订数量、月度支出（按账单周期折算）、
@@ -535,7 +546,7 @@
 const { Plugin, Dialog, Menu, openTab, openMobileFileById } = require("siyuan");
 
 const DOCK_TYPE = "asset-management-dock";
-const PLUGIN_VERSION = "2.6.3";
+const PLUGIN_VERSION = "2.6.4";
 const AUTHOR_URL = "https://ld246.com/member/Dilyar";
 const ICONS8_URL = "https://icons8.com";
 
@@ -743,6 +754,59 @@ this.dockElement = null;
     _normalizeHomeFilterStatus(status) {
         return status === 'active' || status === 'retired' ? status : 'all';
     }
+
+    /**
+     * v2.6.4 筛选记忆：从 settings.rememberedFilters 恢复上次手动筛选。
+     * 恢复链：记忆值 → 设置页默认（defaultSort / defaultStatus）→ 内建兜底（'all' / 'default'）。
+     * search 不持久化（保持构造器空串）；categoryId 不在 UI 暴露，不恢复。
+     */
+    _applyRememberedHomeFilters() {
+        const remembered = this.settings && this.settings.rememberedFilters
+            && typeof this.settings.rememberedFilters === 'object' && !Array.isArray(this.settings.rememberedFilters)
+            ? this.settings.rememberedFilters : null;
+        // status：记忆值经 _normalizeHomeFilterStatus 校验（合法 'active'/'retired'，其余归 'all'）；
+        // 无记忆记录时回落 defaultStatus（同样归一，defaultStatus 仅为兼容保留的回落初值）。
+        const rememberedStatus = remembered && remembered.status
+            ? this._normalizeHomeFilterStatus(remembered.status) : null;
+        this.filter.status = rememberedStatus !== null
+            ? rememberedStatus
+            : this._normalizeHomeFilterStatus(this.settings ? this.settings.defaultStatus : 'all');
+        // kind：合法 displayGroup（physical/virtual/prepaid）→ kind 数组；缺记录/非法回落 'all'。
+        const rememberedKind = remembered && ['physical', 'virtual', 'prepaid'].indexOf(remembered.kind) >= 0
+            ? remembered.kind : 'all';
+        this.filter.kind = this._displayGroupKinds(rememberedKind) || 'all';
+        // sort：记忆值必须是合法 SORT id；缺记录回落 defaultSort（沿用既有初值语义）。
+        const rememberedSort = remembered && typeof remembered.sort === 'string' && remembered.sort
+            && SORTS.some(sort => sort.id === remembered.sort) ? remembered.sort : null;
+        this.filter.sort = rememberedSort || (this.settings ? this.settings.defaultSort : 'default');
+        // tagIds：逐项为字符串即可，不校验存在性（标签可能暂被删除，保留 id 便于恢复）。
+        this.filter.tagIds = remembered && Array.isArray(remembered.tagIds)
+            ? remembered.tagIds.filter(id => typeof id === 'string' && id) : [];
+    }
+
+    /**
+     * v2.6.4 筛选记忆：把当前首页筛选快照写回 settings.rememberedFilters 并立即保存。
+     * 由所有手动筛选入口调用（下拉选项点击 / 标签选择·清除·全选 / 旧 set-filter-status·set-sort /
+     * 设置页默认排序变更 / 设置保存后的筛选重置）。saveSettings 内部 Object.assign 合并、
+     * 异步不阻塞 UI，失败仅 console.warn。
+     */
+    _rememberHomeFilters() {
+        try {
+            const snapshot = {
+                status: this._normalizeHomeFilterStatus(this.filter.status),
+                kind: this._kindToDisplayGroup(this.filter.kind),
+                sort: typeof this.filter.sort === 'string' && this.filter.sort ? this.filter.sort : 'default',
+                tagIds: Array.isArray(this.filter.tagIds) ? this.filter.tagIds.slice() : [],
+            };
+            const saved = this.saveSettings({ rememberedFilters: snapshot });
+            if (saved && typeof saved.catch === 'function') {
+                saved.catch(err => { console.warn('[AssetManagement] remember home filters failed:', err && err.message); });
+            }
+        } catch (err) {
+            console.warn('[AssetManagement] remember home filters failed:', err && err.message);
+        }
+    }
+
 
     _isImeComposing(event) {
         return !!(event && (event.isComposing || event.keyCode === 229));
@@ -1065,10 +1129,9 @@ document.addEventListener('input', this._onNonNegativeNumberInput, true);
             await this.loadAssets();
             await this.loadSettings();
             await this.loadTags();
-            this.filter.sort = this.settings.defaultSort;
-            // defaultStatus is retained only for stored-settings compatibility;
-            // it is no longer a startup preference exposed by the settings UI.
-            this.filter.status = 'all';
+            // v2.6.4 筛选记忆：恢复上次手动筛选；无记忆值时回落设置页默认
+            // （defaultStatus 仅为兼容保留的回落初值，设置 UI 已不暴露）。
+            this._applyRememberedHomeFilters();
             // The default view is a startup preference, while viewMode is the
             // currently rendered mode. Keep them in sync when the plugin opens.
             this.settings.viewMode = this.settings.defaultViewMode;
@@ -4258,6 +4321,8 @@ _closeHomeFilterDropdown(expectedDropdown) {
 
 const updateTagFilter = nextIds => {
             this.filter.tagIds = Array.isArray(nextIds) ? nextIds : [];
+            // v2.6.4 筛选记忆：标签选择/清除/全选切换统一走此入口，一次写回。
+            this._rememberHomeFilters();
             this._updateHomeFilterDropdownTrigger('tag');
             renderDropdown();
             // v1.3.1-fix：用 refreshList 只刷新列表内容，不关闭下拉（支持多选标签）。
@@ -4308,6 +4373,8 @@ const bindDropdownEvents = () => {
                                 const filterKey = kind === 'category' ? 'categoryId' : kind;
                                 this.filter[filterKey] = value;
                             }
+                            // v2.6.4 筛选记忆：status/kind/sort（含 category）下拉选项点击后写回快照。
+                            this._rememberHomeFilters();
                             this._closeHomeFilterDropdown(dropdown);
                         } catch (err) {
                             console.warn('[AssetManagement] dropdown filter-value click failed:', err && err.message);
@@ -5715,8 +5782,8 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
             // v1.6.0：首页到期提醒条——整条点开 popover 清单，× 关闭本批提醒
             case "home-expiry-open": this._openHomeExpiryPopover(target); break;
             case "home-expiry-close": this._dismissHomeExpiryBar(); break;
-            case "set-filter-status": this.filter.status = target.value || 'all'; this.refreshMainContent(); break;
-            case "set-sort": this.filter.sort = target.value || target.dataset.sort || 'default'; this.refreshMainContent(); break;
+            case "set-filter-status": this.filter.status = target.value || 'all'; this._rememberHomeFilters(); this.refreshMainContent(); break;
+            case "set-sort": this.filter.sort = target.value || target.dataset.sort || 'default'; this._rememberHomeFilters(); this.refreshMainContent(); break;
             case "dashboard-time":
                 this.dashboardTimeRange = ['30d', '6m', '12m'].includes(target.dataset.range) ? target.dataset.range : '12m';
                 this.refreshMainContent();
@@ -9704,6 +9771,8 @@ closeProductCard() {
                     });
                     if (!saved) return restoreTab();
                     this.filter.sort = this.settings.defaultSort;
+                    // v2.6.4 筛选记忆：默认排序变更已立即作用于首页筛选，同步更新记忆快照。
+                    this._rememberHomeFilters();
                     this.refreshList();
                 };
             });
@@ -10720,6 +10789,9 @@ closeProductCard() {
             if (saved) {
                 this.filter.sort = this.settings.defaultSort;
                 this.filter.status = this._normalizeHomeFilterStatus(this.settings.defaultStatus);
+                // v2.6.4 筛选记忆：保存设置后首页筛选已重置为默认，同步更新记忆快照，
+                // 避免下次启动恢复到保存前的旧筛选。
+                this._rememberHomeFilters();
             }
             return saved;
         });

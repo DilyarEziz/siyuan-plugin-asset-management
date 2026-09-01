@@ -31,7 +31,9 @@ const { isUUID, daysUntil } = require('./algorithms');
 
 const DEFAULT_MONTHS = 12;
 const MAX_MONTHS = 120;
-// v2.6.3 订阅月度支出折算：计费周期 → 月数。非法/缺失 cycle 回落 1。
+// v2.6.4 订阅月度支出折算：有当期周期时按周期实际天数摊到月度（≈ 日均 ×
+// 30.4375，与订阅日均口径一致）；此处名义月数仅在周期起止不可用时作回落
+// （非法/缺失 cycle 回落 1）。
 const SUBSCRIPTION_BILLING_CYCLE_MONTHS = Object.freeze({ monthly: 1, quarterly: 3, halfYearly: 6, yearly: 12 });
 function finite(value, fallback) { const n = Number(value); return Number.isFinite(n) ? n : (fallback || 0); }
 function currencyOf(value) { return String(value || 'CNY').trim().toUpperCase() || 'CNY'; }
@@ -568,7 +570,8 @@ function buildFormalReport(snapshot, filterInput, options) {
 
     // -----------------------------------------------------------------
     // v2.6.3 订阅专属聚合：不再套用实物报表口径。累计支出含已退役订阅的
-    // 历史付款；月度支出只算在役订阅，按计费周期折算；试用期计 0。
+    // 历史付款；月度支出只算在役订阅，按当期周期实际天数折算（v2.6.4）；
+    // 试用期计 0。
     // -----------------------------------------------------------------
     const financialEventById = new Map(sidecars.financialEvents.map(event => [event.id, event]));
     const periodPaymentAmountMinor = period => {
@@ -601,10 +604,19 @@ function buildFormalReport(snapshot, filterInput, options) {
         const stateKey = card.subscription.isTrial ? 'trial'
             : (hasOwn(report.subscription.byState, card.subscription.state) ? card.subscription.state : null);
         if (stateKey) report.subscription.byState[stateKey] = safeAddFormal(report.subscription.byState[stateKey], 1, 'subscription.byState.' + stateKey);
-        // 月度支出 = 当期付款 ÷ 计费周期月数；试用期/无当期/无付款事件计 0。
+        // v2.6.4 月度支出 = 当期付款 ÷ 当期周期实际天数（含两端）× 30.4375，
+        // 与订阅日均（formalDailyAmountMinor 的 period 口径）完全自洽；
+        // 试用期/无当期/无付款事件计 0；周期起止解析失败或倒挂（periodDays ≤ 0）
+        // 时回落名义计费周期月数折算。
         const periodAmount = periodPaymentAmountMinor(card.subscription.currentPeriod);
         if (periodAmount > 0) {
-            const monthly = Math.round(periodAmount / billingCycleMonths(entry.asset));
+            const period = card.subscription.currentPeriod;
+            const periodStart = parseRecordedDate(period.startDate);
+            const periodEnd = parseRecordedDate(period.endDate);
+            const periodDays = periodStart && periodEnd ? Math.floor((periodEnd.getTime() - periodStart.getTime()) / 86400000) + 1 : 0;
+            const monthly = periodDays > 0
+                ? Math.round(periodAmount / periodDays * 30.4375)
+                : Math.round(periodAmount / billingCycleMonths(entry.asset));
             currencyBucket.monthlyAmountMinor = safeAddFormal(currencyBucket.monthlyAmountMinor, monthly, 'subscription.monthlyAmountMinor');
         }
     });

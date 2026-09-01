@@ -2,7 +2,7 @@
     "name": "siyuan-plugin-asset-management",
     "author": "Dilyar",
     "url": "https://github.com/DilyarEziz/siyuan-plugin-asset-management",
-    "version": "2.6.3",
+    "version": "2.6.4",
     "minAppVersion": "3.8.0",
     "disabledInPublish": false,
     "backends": [

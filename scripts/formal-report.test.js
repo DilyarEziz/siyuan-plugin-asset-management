@@ -89,7 +89,8 @@ assert.equal(Object.getPrototypeOf(report.prepaid.countByAsset), null);
 assert.deepEqual(snapshot, before, "formal report must not mutate snapshot");
 
 // v2.6.3 订阅专属聚合：total 含退役；byState 只数在役（月付且在期 → subscribed）；
-// 累计支出 = 未作废订阅付款合计；月度支出 = 当期付款 ÷ 计费周期月数（monthly×1）。
+// 累计支出 = 未作废订阅付款合计；月度支出（v2.6.4 口径）= 当期付款 ÷ 当期周期
+// 实际天数（含两端）× 30.4375：3000 ÷ 31 天 × 30.4375 = 2945.56… → 2946。
 assert.equal(report.subscription.total, 1);
 assert.equal(report.subscription.byState.subscribed, 1);
 assert.equal(report.subscription.byState.trial, 0);
@@ -97,7 +98,7 @@ assert.equal(report.subscription.byState.expired, 0);
 assert.equal(report.subscription.byState.pendingConfirmation, 0);
 assert.equal(report.subscription.byCurrency.CNY.currency, "CNY");
 assert.equal(report.subscription.byCurrency.CNY.paidAmountMinor, 3000);
-assert.equal(report.subscription.byCurrency.CNY.monthlyAmountMinor, 3000);
+assert.equal(report.subscription.byCurrency.CNY.monthlyAmountMinor, 2946); // v2.6.4：3000/31 天 × 30.4375
 assert.equal(report.subscription.byCurrency.CNY.activeCount, 1);
 assert.equal(report.subscription.upcomingRenewals.length, 1);
 assert.equal(report.subscription.upcomingRenewals[0].assetId, subscription.id);
@@ -132,5 +133,51 @@ assert.deepEqual(emptyReport.subscription.upcomingRenewals, []);
 assert.deepEqual(Object.assign({}, emptyReport.prepaid.countTotals), { assetCount: 0, remainingCount: 0, chargeCount: 0, consumeCount: 0 });
 assert.deepEqual(emptyReport.prepaid.expiringWithin30Days, []);
 assert.equal(Object.isFrozen(emptyReport.subscription), true);
+
+// ---------------------------------------------------------------------------
+// v2.6.4 订阅月度支出按「当期周期实际天数（含两端）」摊算的专项用例。
+// 每个用例使用独立最小快照，避免与主快照互相干扰。
+// ---------------------------------------------------------------------------
+function monthlyCaseSnapshot(periods, cycle) {
+    const sub = makeAsset("virtualSubscription", 1, { details: { billingPlan: { cycle: cycle || "yearly" }, autoRenew: false, planName: "Plan", accountLabel: null } });
+    const payment = { id: "20000000-0000-4000-8000-000000000002", schemaVersion: 1, assetId: sub.id, occurredAt: NOW, effectiveDate: TODAY, createdAt: NOW, source: "user", correlationId: null, note: "", metadata: {}, replacesEventId: null, voidedAt: null, direction: "outflow", eventType: "subscriptionPayment", currency: "CNY", amountMinor: 20000 };
+    const basePeriod = { id: "40000000-0000-4000-8000-000000000001", schemaVersion: 1, assetId: sub.id, occurredAt: NOW, effectiveDate: TODAY, createdAt: NOW, source: "user", correlationId: null, note: "", metadata: {}, replacesEventId: null, voidedAt: null, kind: "billing", paymentEventId: payment.id };
+    return {
+        assets: createFormalV2AssetWrapper([sub], { updatedAt: NOW }),
+        tags: { schemaVersion: 1, tags: [], updatedAt: NOW },
+        financialEvents: { schemaVersion: 1, events: [payment], updatedAt: NOW },
+        lifecycleEvents: { schemaVersion: 1, events: [], updatedAt: NOW },
+        subscriptionPeriods: { schemaVersion: 1, records: periods.map(p => Object.assign({}, basePeriod, p)), updatedAt: NOW },
+        prepaidTransactions: { schemaVersion: 1, records: [], updatedAt: NOW },
+        maintenance: { schemaVersion: 1, records: [], updatedAt: NOW },
+        wishlistEvents: { schemaVersion: 1, events: [], updatedAt: NOW },
+        operationLogs: { schemaVersion: 1, logs: [], updatedAt: NOW },
+        exchangeRates: { schemaVersion: 1, baseCurrency: "CNY", rates: {}, updatedAt: NOW },
+    };
+}
+function subscriptionMonthlyOf(snapshot) {
+    const r = buildFormalReport(snapshot, { months: 6, dateFrom: "2026-03-01", endDate: TODAY }, { now: NOW });
+    return r.subscription.byCurrency.CNY ? r.subscription.byCurrency.CNY.monthlyAmountMinor : 0;
+}
+
+// 用例 1：年付 20000 分、实际周期 2026-01-01 → 2026-12-31（含两端 365 天）
+// → 月度 = Math.round(20000 / 365 × 30.4375) = Math.round(1667.81…) = 1668。
+assert.equal(subscriptionMonthlyOf(monthlyCaseSnapshot([{ startDate: "2026-01-01", endDate: "2026-12-31" }], "yearly")), 1668);
+
+// 用例 2：cycle 名义 halfYearly（6 个月）但实际周期 364 天（2026-01-01 → 2026-12-30）
+// → 按实际天数折算 = Math.round(20000 / 364 × 30.4375) = 1672，
+// 不再受名义 cycle 影响（旧口径会得 20000 / 6 = 3333）。
+assert.equal(subscriptionMonthlyOf(monthlyCaseSnapshot([{ startDate: "2026-01-01", endDate: "2026-12-30" }], "halfYearly")), 1672);
+
+// 用例 3：无当期周期（周期 2026-01-01 → 2026-01-31 不覆盖 today 2026-07-19）
+// → currentPeriod 为 null → 月度支出贡献 0，不新增计入。
+assert.equal(subscriptionMonthlyOf(monthlyCaseSnapshot([{ startDate: "2026-01-01", endDate: "2026-01-31" }], "yearly")), 0);
+
+// 用例 4：起止倒挂周期（startDate > endDate）在报表入口即被周期记录校验拒绝
+// （startDate must not be after endDate），不可能进入月度折算；此处锁定该
+// 防线不回归。月度折算内部的 periodDays ≤ 0 回落分支因此为纯防御路径。
+assert.throws(function() {
+    buildFormalReport(monthlyCaseSnapshot([{ startDate: "2026-07-31", endDate: "2026-07-01" }], "yearly"), { months: 6, dateFrom: "2026-03-01", endDate: TODAY }, { now: NOW });
+});
 
 console.log("[formal-report] passed");

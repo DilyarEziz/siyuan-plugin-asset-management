@@ -4,6 +4,14 @@
 
 ## 中文
 
+### v2.6.4
+
+**筛选记忆与订阅月度支出修正**
+
+- 改进：资产页会记住你上次选择的筛选——状态、类型、排序、标签，重新打开插件时自动恢复；例如选了「在役」，下次打开仍停在「在役」。
+- 修复：报表「订阅分析」中月度支出与日均不一致的问题——月度支出现在按当前订阅周期的实际长度换算，与日均口径一致；例如日均 0.55 元/天的订阅，月度约 16.7 元/月，不再出现翻倍数字。
+- 构建：版本号升至 `2.6.4`，同步更新双语 README、构建产物和发布包。
+
 ### v2.6.3
 
 **报表分析卡片 + 汇率自动更新**
@@ -275,6 +283,14 @@
 - 编辑预付权益时，价格字段预填首笔购买金额。
 
 ## English
+
+### v2.6.4
+
+**Filter memory and subscription monthly spending fix**
+
+- Improved: the asset page now remembers the filters you last chose — status, type, sort, and tags — and restores them the next time you open the plugin; for example, if you filtered by "Active", it stays on "Active" next time.
+- Fixed: monthly spending in the report's "Subscription analysis" no longer disagrees with the daily average — it is now converted by the actual length of the current subscription period, matching the daily average; a subscription costing about 0.55 yuan per day now shows roughly 16.7 yuan per month instead of a doubled figure.
+- Build: version bumped to `2.6.4`; bilingual READMEs, build artifacts, and the release package are synchronized.
 
 ### v2.6.3
 

@@ -180,6 +180,8 @@ const FORMAL_BACKUP_SETTING_KEYS = Object.freeze([
     'indexAutoSync', 'indexIncludeCover',
     // v2.6.4 阶段1：汇率自动刷新开关（备份/导入与重置保留均走此白名单）。
     'exchangeRateAutoRefresh',
+    // v2.6.4 筛选记忆：首页上次手动筛选快照（备份/导入与重置保留均走此白名单）。
+    'rememberedFilters',
     // 旧 2.6 顾问字段继续接受导入，但 normalize 后不会写回。
     'aiEnabled', 'aiPrivacyScope', 'aiIncludeFinancial', 'aiIncludeNotes', 'aiMaxAssets', 'aiLanguage',
     'aiAllowQuery', 'aiAllowCreate', 'aiAllowModify', 'aiAllowLifecycle', 'aiAllowRecords', 'aiAllowDelete',
@@ -889,6 +891,8 @@ function validateFormalBackupSettings(value, allowStorageMetadata) {
         indexIncludeCover: normalized.indexIncludeCover,
         // v2.6.4 阶段1：汇率自动刷新开关随备份/导入往返（值已由 normalizeSettings 归一）。
         exchangeRateAutoRefresh: normalized.exchangeRateAutoRefresh,
+        // v2.6.4 筛选记忆：首页上次手动筛选随备份/导入往返（值已由 normalizeRememberedFilters 归一）。
+        rememberedFilters: cloneStorageSnapshot(normalized.rememberedFilters),
         aiEnabled: normalized.aiEnabled,
         aiAllowQuery: normalized.aiAllowQuery,
         aiAllowCreate: normalized.aiAllowCreate,
@@ -1025,6 +1029,30 @@ function normalizeCustomTagColors(value) {
     return result;
 }
 
+// v2.6.4 筛选记忆：归一首页上次手动筛选快照（status/kind/sort/tagIds）。
+// 存量 settings 缺键或结构非法（非对象/数组）一律归 null（视为"无记忆"，恢复逻辑自行回落默认值），
+// 绝不让旧 settings.json 加载报错。sort 在存储层只做字符串形态校验，合法性由插件侧对照 SORT 表判断。
+function normalizeRememberedFilters(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const seen = new Set();
+    const tagIds = [];
+    const rawTagIds = Array.isArray(value.tagIds) ? value.tagIds : [];
+    for (const item of rawTagIds) {
+        if (typeof item !== 'string') continue;
+        const trimmed = item.trim();
+        if (!trimmed || seen.has(trimmed)) continue;
+        seen.add(trimmed);
+        tagIds.push(trimmed);
+    }
+    return {
+        status: ['all', 'active', 'retired'].indexOf(value.status) >= 0 ? value.status : 'all',
+        kind: ['all', 'physical', 'virtual', 'prepaid'].indexOf(value.kind) >= 0 ? value.kind : 'all',
+        sort: typeof value.sort === 'string' && value.sort.trim()
+            ? value.sort.trim().slice(0, 32) : 'default',
+        tagIds,
+    };
+}
+
 const DEFAULT_SETTINGS = Object.freeze(Object.assign({
     defaultSort: 'default', defaultStatus: 'all', defaultViewMode: 'list', viewMode: 'list',
     // v1.7-P2：矩阵视图列数偏好。'auto' = 按容器宽度自适应（2/3/4），或手选 2/3/4 固定列数。
@@ -1049,6 +1077,8 @@ const DEFAULT_SETTINGS = Object.freeze(Object.assign({
     indexIncludeCover: false,
     // v2.6.4 阶段1：汇率自动刷新开关（手动修正优先，自动刷新不得覆盖 manual 来源）。
     exchangeRateAutoRefresh: true,
+    // v2.6.4 筛选记忆：首页上次手动筛选快照（null = 无记忆，启动时回落 defaultSort/defaultStatus）。
+    rememberedFilters: null,
 }, AGENT_DEFAULT_SETTINGS, {
     schemaVersion: SIDECAR_SCHEMA,
 }));
@@ -1965,6 +1995,8 @@ function normalizeSettings(raw) {
         // v2.6.4 阶段1：汇率自动刷新开关——存量 settings 缺键回落 true（!== false 语义，
         // 同 notificationsEnabled / indexAutoSync）。
         exchangeRateAutoRefresh: migrated.exchangeRateAutoRefresh !== false,
+        // v2.6.4 筛选记忆：快照归一——存量缺键/非法结构归 null，不阻塞旧数据加载。
+        rememberedFilters: normalizeRememberedFilters(migrated.rememberedFilters),
         ...normalizeAgentSettings(migrated),
         schemaVersion: SIDECAR_SCHEMA,
     });
