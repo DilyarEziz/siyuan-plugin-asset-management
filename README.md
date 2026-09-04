@@ -1,8 +1,15 @@
-# Asset Management
+**The asset management plugin for SiYuan: physical items, memberships, and prepaid benefits in one place, covering the full lifecycle from wishlist to active to retired. Automatic daily cost, expiry tracking, a heartbeat wishlist, subscription & prepaid reports, two-way note links, an AI assistant, multi-currency with live exchange rates, and JSON / Markdown export.**
 
-**Everything you own and pay for, in one place — and always know if it's worth it.**
+<div align="center">
 
-Asset Management is a personal asset keeper that lives in your SiYuan Note sidebar. Physical items, subscriptions, stored-value cards — keep them all in one view: what's in service, what's retired, what each purchase costs you per day, and which membership is about to expire. Open the sidebar, and it's all there.
+Your personal asset keeper in SiYuan · Wishlist / Active / Retired · Daily cost · Expiry badges · Reports · Note links · AI assistant · Mobile ready
+
+</div>
+
+| 📖 Full guide | 🐛 Issues |
+| :---: | :---: |
+| **[Complete guide (LianDi)](https://ld246.com/article/1788492088313)** | **[GitHub Issues](https://github.com/DilyarEziz/siyuan-plugin-asset-management/issues)** |
+| ⭐ **[Repository](https://github.com/DilyarEziz/siyuan-plugin-asset-management)** | ⬇️ **Install**: SiYuan marketplace → search "Asset Management" |
 
 ## Changelog
 
@@ -40,58 +47,3 @@ Asset Management is a personal asset keeper that lives in your SiYuan Note sideb
 - Improved: asset list cards drop the extra padding above and below, so the list's top and bottom edges are no longer too wide.
 
 > For the full changelog, see [CHANGELOG.md](./CHANGELOG.md).
-
-## Features
-
-### Three kinds of assets, one home
-
-- **Physical** — electronics, appliances, furniture, anything you buy
-- **Virtual** — subscriptions and one-time purchases you keep forever
-- **Prepaid** — stored-value balances and usage-count packages, always up to date
-
-### A full lifecycle, from "want it" to "done with it"
-
-- Three stages: wishlist (want to buy) → active (in use) → retired
-- Bought something from your wishlist? Turn it into an active asset in one step — or drop it when you change your mind
-- Expected-price tracking on wishlist items, with a trend curve as prices move
-
-### Know what it's really costing you
-
-- **Daily cost** — automatically works out what each asset costs per day
-- **Depreciation** — several methods to watch value fade over time
-- **Target daily price** — set a goal and see how close you are to earning it back
-
-### Never miss an expiry
-
-- Five-level expiry badges that get more urgent as the date approaches
-- Expired items are detected automatically, and the home page shows a "expiring soon" reminder
-
-### Multiple currencies
-
-- CNY and USD; the home page totals in CNY while each card also shows the converted amount
-
-### Records and organization
-
-- Colored tags to group things your own way
-- Maintenance and usage records — every item keeps its own history
-- Reports at a glance: category ranking, tag ranking, amount trend, price ranking
-
-### Works with your notes
-
-- Keep an optional asset index document that stays connected even when you move or rename it
-- Copy or insert native asset block references, then see backlinks, tagged blocks, and manually linked notes on the product card
-- Open a product card directly from its block reference; modifier-key jumps and right-click / long-press actions remain available on desktop and mobile
-
-### Views and search
-
-- List and grid views, comfortable at any width
-- Filter by status, category and tag, sort your way, plus keyword search
-
-### Your data stays yours
-
-- JSON backup & restore, Markdown export
-- Data lives inside your SiYuan workspace and syncs with SiYuan — uninstalling never deletes it
-
-### Designed for every day
-
-- Liquid-glass interface, full dark mode, and a mobile-friendly layout
