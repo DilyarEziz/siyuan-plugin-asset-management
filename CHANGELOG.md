@@ -4,6 +4,14 @@
 
 ## 中文
 
+### v2.6.5
+
+**适配思源笔记 3.8.3 + AI 操作响应提速**
+
+- 改进：适配思源笔记 3.8.3——AI 助手在最新版内核上可正常调用资产管理的各项工具；新版内核调整了插件工具的接入方式，插件已自动兼容，无需任何手动操作。
+- 改进：AI 修改资产（改名、调整状态、更新备注等）的响应更快——操作结果一经保存立即生效返回，无需等待固定间隔；在不支持该机制的环境中自动沿用原有方式，稳定性不受影响。
+- 构建：版本号升至 `2.6.5`，同步更新双语 README、构建产物和发布包。
+
 ### v2.6.4
 
 **筛选记忆与订阅月度支出修正**
@@ -283,6 +291,14 @@
 - 编辑预付权益时，价格字段预填首笔购买金额。
 
 ## English
+
+### v2.6.5
+
+**SiYuan Notes 3.8.3 compatibility + faster AI actions**
+
+- Improved: compatibility with SiYuan Notes 3.8.3 — the AI assistant can call the asset management tools normally on the latest kernel; the new kernel changed how plugin tools are registered, and the plugin handles this automatically with no action needed.
+- Improved: AI edits to your assets (renaming, changing status, updating notes, and so on) now respond faster — results take effect as soon as they are saved, with no fixed waiting period; on environments that don't support this, the plugin automatically falls back to the previous behavior with no loss of stability.
+- Build: version bumped to `2.6.5`; bilingual READMEs, build artifacts, and the release package are synchronized.
 
 ### v2.6.4
 

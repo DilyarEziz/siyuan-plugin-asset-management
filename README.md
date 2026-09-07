@@ -13,6 +13,13 @@ Your personal asset keeper in SiYuan · Wishlist / Active / Retired · Daily cos
 
 ## Changelog
 
+### v2.6.5
+
+**SiYuan Notes 3.8.3 compatibility + faster AI actions**
+
+- Improved: compatibility with SiYuan Notes 3.8.3 — the AI assistant can call the asset management tools normally on the latest kernel; the new kernel changed how plugin tools are registered, and the plugin handles this automatically with no action needed.
+- Improved: AI edits to your assets (renaming, changing status, updating notes, and so on) now respond faster — results take effect as soon as they are saved, with no fixed waiting period; on environments that don't support this, the plugin automatically falls back to the previous behavior with no loss of stability.
+
 ### v2.6.4
 
 **Filter memory and subscription monthly spending fix**
@@ -34,16 +41,5 @@ Your personal asset keeper in SiYuan · Wishlist / Active / Retired · Daily cos
 - New: the exchange-rate area shows the current rates, their source (automatic update or manual setting), and the last refresh time, together with a "Refresh now" button.
 - New: manual rate adjustments cover the US dollar, euro, and British pound; after a manual adjustment, automatic updates will not overwrite it — use "Restore automatic rates" to switch back at any time.
 - Fixed: the 5 preset icons in the "Service" category of the icon picker were not showing; they now display correctly.
-
-### v2.6.2
-
-**Active-only totals, inline recovered amount, and retirement dates in the note index**
-
-- Improved: the home summary now counts only assets in service — the total value and daily average cost no longer include retired items, and when there is resale income, a `Recovered:` amount is shown inline right beside the total value.
-- Improved: in the report's asset overview, both the total value and retired recovery are compressed into single lines, each with an asset count.
-- New: in the note index document, retired asset entries show their retirement date, aligned with the expiry-date column of active assets.
-- Fixed: when a new asset was set to retired right at creation, its sale price was silently discarded; it is now recorded correctly as recovery income.
-- Fixed: when editing a retired asset, the sale price is now filled in automatically, and changing it is saved as a new recovery record.
-- Improved: asset list cards drop the extra padding above and below, so the list's top and bottom edges are no longer too wide.
 
 > For the full changelog, see [CHANGELOG.md](./CHANGELOG.md).

@@ -11,9 +11,11 @@
  *     `siyuan.storage.put(path, jsonString)` 整文件覆盖写
  *   - 存储目录与前端插件共享：data/storage/petal/siyuan-plugin-asset-management/<path>
  *
- * 职责（v2.6.0 内核 Agent 工具）：
- *   - onload 时优先通过 siyuan.mcp.registerTool 注册 9 个资产工具，
- *     并为 3.8.0 运行时保留 siyuan.agent.registerCapability 回退
+ * 职责（v2.6.0 内核 Agent 工具；v2.6.5-dev 适配思源 3.8.3）：
+ *   - onload 时注册 9 个资产工具。注册通道按运行时探测自动选择：
+ *     siyuan.mcp.registerTool / unregisterTool 仅思源 3.8.1 提供，3.8.2 起内核已移除
+ *     （3.8.3 源码 kernel 包零命中）；siyuan.agent.registerCapability 在 3.8.3 保留且
+ *     config 字段兼容，因此 3.8.2+ 实际走 registerCapability 分支，3.8.0 同样可用。
  *     （asset_query / asset_create / asset_update / asset_lifecycle / asset_record / asset_price_update / asset_delete / asset_tag_update / asset_tag_create），
  *     最终暴露名 plugin__siyuan-plugin-asset-management__<name>（前缀内核自动加），内置 Agent 与 MCP 均可调用
  *   - 查询类工具实时读 storage 投影（复用 api/agent-actions.js 的脱敏投影）
@@ -65,6 +67,8 @@
     var KERNEL_STATUS_FILE = 'agent-kernel-status.json';
     var WRITE_POLL_INTERVAL_MS = 250;
     var WRITE_TIMEOUT_MS = 30 * 1000;
+    // v2.6.5-dev：fs-notify 事件驱动唤醒的 watcher 注册超时保护；任何失败仅降级为纯轮询。
+    var WRITE_FS_WATCH_TIMEOUT_MS = 3000;
 
     var WRITE_METHOD_NAMES = Object.freeze([
         'addAsset', 'updateAsset', 'setStatus', 'deleteAsset',
@@ -335,6 +339,151 @@
         await writeJson(WRITE_MANIFEST_FILE, manifest, deadline);
     }
 
+    // ---------- fs-notify 事件驱动写完成唤醒（v2.6.5-dev 适配思源 3.8.3） ----------
+    //
+    // 前端插件把 completed/<id>.json 写入后，内核通过 siyuan.storage.watcher 监听
+    // agent-writes/completed 目录，收到 fs-notify 事件即唤醒对应 submitWrite 的
+    // waiter 立即重读结果；事件驱动不可用时 250ms 兜底轮询保证行为不回退。
+
+    // 请求 id → 唤醒函数集合；同一 id 并发等待极少见，仍用 Set 防互相覆盖。
+    var writeCompletionWaiters = new Map();
+    var writeFsNotify = {
+        enabled: false,          // watcher.add 成功后才置 true
+        handlerInstalled: false, // siyuan.event.handler 已被本模块接管
+        previousEventHandler: null,
+        // watcher.add/remove 使用的相对路径（不含尾部斜杠，指向 completed 目录）。
+        watchPath: WRITE_COMPLETED_DIR.replace(/\/+$/, ''),
+    };
+
+    function registerWriteCompletionWaiter(id) {
+        var key = String(id);
+        var wake;
+        var promise = new Promise(function (resolve) { wake = resolve; });
+        var set = writeCompletionWaiters.get(key);
+        if (!set) {
+            set = new Set();
+            writeCompletionWaiters.set(key, set);
+        }
+        set.add(wake);
+        return {
+            promise: promise,
+            // 收到结果 / 兜底轮询到点 / 异常退出都必须调用，防止 waiter 泄漏。
+            dispose: function () {
+                var current = writeCompletionWaiters.get(key);
+                if (current) {
+                    current.delete(wake);
+                    if (current.size === 0) writeCompletionWaiters.delete(key);
+                }
+            },
+        };
+    }
+
+    function notifyWriteCompletion(id) {
+        var key = String(id || '');
+        if (!key) return;
+        var set = writeCompletionWaiters.get(key);
+        if (!set || set.size === 0) return; // 无 waiter：no-op，纯轮询兜底已覆盖
+        writeCompletionWaiters.delete(key);
+        set.forEach(function (wake) {
+            try { wake(); } catch (error) { /* 唤醒回调异常不得外抛到事件处理 */ }
+        });
+    }
+
+    function clearWriteCompletionWaiters() {
+        // 清空后等待中的 submitWrite 由 250ms 兜底轮询自然收尾，不需要显式唤醒。
+        writeCompletionWaiters.clear();
+    }
+
+    function dispatchFsNotifyEvent(event) {
+        if (!event || typeof event !== 'object' || event.type !== 'fs-notify') return;
+        var detail = event.detail;
+        if (!detail || typeof detail !== 'object') return;
+        if (detail.operation === 'REMOVE') return; // 移除事件不表示结果就绪
+        var rawPath = typeof detail.path === 'string' ? detail.path : '';
+        if (!rawPath) return;
+        // path 由 Go filepath.Rel 生成，Windows 上是反斜杠分隔，必须归一化后匹配。
+        var normalizedPath = rawPath.replace(/\\/g, '/');
+        if (normalizedPath.indexOf(WRITE_COMPLETED_DIR) !== 0) return;
+        var fileName = normalizedPath.slice(WRITE_COMPLETED_DIR.length);
+        if (!fileName || fileName.indexOf('/') !== -1 || fileName.slice(-5) !== '.json') return;
+        var requestId;
+        try {
+            requestId = decodeURIComponent(fileName.slice(0, -5));
+        } catch (error) {
+            requestId = fileName.slice(0, -5);
+        }
+        notifyWriteCompletion(requestId);
+    }
+
+    function logFsNotifyDegraded(reason) {
+        try {
+            if (typeof console !== 'undefined' && console && typeof console.warn === 'function') {
+                console.warn('[asset-management] fs-notify write completion unavailable, falling back to polling: ' + reason);
+            }
+        } catch (error) { /* 沙箱无 console 时静默降级 */ }
+    }
+
+    // 注册 watcher + event.handler；任何失败只警告并降级，绝不阻塞或破坏 onload。
+    async function setupWriteFsNotify() {
+        if (writeFsNotify.enabled) return;
+        try {
+            var watcher = siyuan && siyuan.storage && siyuan.storage.watcher;
+            if (!watcher || typeof watcher.add !== 'function' || typeof watcher.remove !== 'function') {
+                logFsNotifyDegraded('siyuan.storage.watcher unavailable');
+                return;
+            }
+            if (!siyuan.event || typeof siyuan.event !== 'object') {
+                logFsNotifyDegraded('siyuan.event unavailable');
+                return;
+            }
+            // 链式保留既有 handler（防御式；当前内核 JS 侧没有其它 handler）。
+            // 内核对 handler 的调用形态是 handler(event, eventJs) 两个参数，两个形态都尝试解析。
+            var previousHandler = typeof siyuan.event.handler === 'function' ? siyuan.event.handler : null;
+            writeFsNotify.previousEventHandler = previousHandler;
+            siyuan.event.handler = function (event, eventJs) {
+                try { dispatchFsNotifyEvent(event); } catch (error) { /* 事件解析失败绝不外抛 */ }
+                try { dispatchFsNotifyEvent(eventJs); } catch (error) { /* Goja 双参形态防御 */ }
+                if (previousHandler) {
+                    try { return previousHandler(event, eventJs); }
+                    catch (error) { return undefined; }
+                }
+                return undefined;
+            };
+            writeFsNotify.handlerInstalled = true;
+            // 超时保护：内核不支持文件监听时可能 reject（或挂起），都不能拖死 onload。
+            await withDeadline(
+                Promise.resolve().then(function () { return watcher.add(writeFsNotify.watchPath); }),
+                Date.now() + WRITE_FS_WATCH_TIMEOUT_MS,
+                new Error('siyuan.storage.watcher.add timed out')
+            );
+            writeFsNotify.enabled = true;
+        } catch (error) {
+            writeFsNotify.enabled = false;
+            logFsNotifyDegraded(text(error && (error.message || error.msg)) || 'watcher add failed');
+        }
+    }
+
+    async function teardownWriteFsNotify() {
+        try {
+            var watcher = siyuan && siyuan.storage && siyuan.storage.watcher;
+            if (watcher && typeof watcher.remove === 'function') {
+                await watcher.remove(writeFsNotify.watchPath);
+            }
+        } catch (error) { /* 卸载阶段尽力而为 */ }
+        clearWriteCompletionWaiters();
+        if (writeFsNotify.handlerInstalled && siyuan && siyuan.event) {
+            try {
+                // previousEventHandler 为 null 时显式清空，恢复到接管前状态。
+                siyuan.event.handler = writeFsNotify.previousEventHandler;
+            } catch (error) { /* 卸载阶段尽力而为 */ }
+        }
+        writeFsNotify.enabled = false;
+        writeFsNotify.handlerInstalled = false;
+        writeFsNotify.previousEventHandler = null;
+    }
+
+    // ---------- fs-notify 唤醒模块结束 ----------
+
     async function submitWrite(methodName, argsArray) {
         var deadline = Date.now() + getWriteTimeoutMs();
         var id = createStableId();
@@ -380,7 +529,17 @@
             if (completed.status !== 'missing') throw queueUnavailableError(completed.error);
             var remaining = deadline - Date.now();
             if (!(remaining > 0)) return writeTimeoutResult();
-            await sleep(Math.min(WRITE_POLL_INTERVAL_MS, remaining));
+            // v2.6.5-dev：fs-notify 事件驱动唤醒——前端写入 completed 后立即重读（不 sleep）；
+            // waiter 未命中 / 事件驱动不可用时退回 250ms 兜底轮询，最坏性能与旧实现一致。
+            var waiter = registerWriteCompletionWaiter(id);
+            try {
+                await Promise.race([
+                    waiter.promise,
+                    sleep(Math.min(WRITE_POLL_INTERVAL_MS, remaining)),
+                ]);
+            } finally {
+                waiter.dispose();
+            }
         }
     }
 
@@ -661,6 +820,9 @@
         if (!siyuan.storage || typeof siyuan.storage.get !== 'function' || typeof siyuan.storage.put !== 'function') {
             throw new Error('siyuan.storage is unavailable; SiYuan 3.8.0+ kernel plugin runtime is required');
         }
+        // 版本事实（v2.6.5-dev）：siyuan.mcp.registerTool / unregisterTool 仅思源 3.8.1 提供，
+        // 3.8.2 起内核已移除（3.8.3 源码 kernel 包零命中）；本守卫在 3.8.2+ 上自动放行，
+        // 由 registrationRuntime() 选择 siyuan.agent.registerCapability 分支（3.8.3 保留、config 兼容）。
         var hasMcp = siyuan.mcp && typeof siyuan.mcp.registerTool === 'function' && typeof siyuan.mcp.unregisterTool === 'function';
         var hasAgent = siyuan.agent && typeof siyuan.agent.registerCapability === 'function' && typeof siyuan.agent.unregisterCapability === 'function';
         if (!hasMcp && !hasAgent) {
@@ -669,6 +831,7 @@
     }
 
     function registrationRuntime() {
+        // 仅 3.8.1 会命中 registerTool 分支；3.8.2+ / 3.8.0 走 registerCapability。
         if (siyuan.mcp && typeof siyuan.mcp.registerTool === 'function' && typeof siyuan.mcp.unregisterTool === 'function') {
             return {
                 api: 'registerTool',
@@ -765,6 +928,9 @@
                 registeredAt: new Date().toISOString(),
                 tools: names,
             });
+            // v2.6.5-dev：工具注册成功后启用 fs-notify 写完成唤醒；
+            // setupWriteFsNotify 内部全量 catch，任何失败仅降级为 250ms 兜底轮询。
+            await setupWriteFsNotify();
         } catch (error) {
             await rollbackAgentTools(runtimeForApi(runtime.api) || runtime, error);
             throw error;
@@ -811,6 +977,9 @@
     siyuan.plugin.lifecycle.onrunning = function () {};
 
     siyuan.plugin.lifecycle.onunload = async function () {
+        // v2.6.5-dev：先停 fs-notify（移除 watcher + 还原 handler + 清空 waiter），
+        // 再逐个注销工具；清理路径全部 catch 包裹，不影响工具注销。
+        await teardownWriteFsNotify();
         await unregisterAgentTools();
     };
 })();

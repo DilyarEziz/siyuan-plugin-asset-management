@@ -109,6 +109,18 @@ function createSiyuanMock(mode, options) {
             async unregisterTool(name) { registry.delete(name); },
         };
     }
+    // v2.6.5-dev：可选的 fs-notify 环境（3.8.3 内核形态）。默认不启用，
+    // 让既有用例继续覆盖“无 watcher API → 纯轮询降级”路径。
+    if (testOptions.withFsNotify) {
+        const watchedPaths = [];
+        const removedPaths = [];
+        siyuan.storage.watcher = {
+            async add(relPath) { watchedPaths.push(relPath); },
+            async remove(relPath) { removedPaths.push(relPath); },
+        };
+        siyuan.event = {};
+        siyuan.__fsNotify = { watchedPaths, removedPaths };
+    }
     return {
         storageMap,
         registry,
@@ -769,6 +781,82 @@ async function testRegistrationRollbackAndRetry() {
     await global.siyuan.plugin.lifecycle.onunload();
 }
 
+/**
+ * v2.6.5-dev：fs-notify 事件驱动写完成唤醒。
+ * watcher 注册 + event.handler 安装 → 事件唤醒 waiter 立即重读（反斜杠路径归一化、
+ * REMOVE/无关事件不误触发）→ onunload 移除 watcher 并还原 handler。
+ */
+async function testFsNotifyWake() {
+    const mock = createSiyuanMock('agent', { withFsNotify: true });
+    global.siyuan = mock.siyuan;
+    delete require.cache[require.resolve(KERNEL_FILE)];
+    require(KERNEL_FILE);
+    seedDomainFiles(mock.storageMap);
+    seedSettings(mock.storageMap);
+    await global.siyuan.plugin.lifecycle.onload();
+    assert.deepEqual(mock.siyuan.__fsNotify.watchedPaths, ['agent-writes/completed'],
+        'watcher watches the completed directory');
+    assert.equal(typeof mock.siyuan.event.handler, 'function', 'event handler installed');
+
+    const harness = createHarness([]);
+    const plugin = bridgeHarnessToKernelStorage(harness, mock.storageMap);
+    installWebLockMock(createSharedWebLockMock());
+    plugin.settings = { aiEnabled: true, aiAllowCreate: true };
+    plugin._formalDomainLoaded = true;
+    plugin._agentWriteMethods.addAsset = async data => data;
+
+    let createSettled = false;
+    const createPromise = mock.registry.get('asset_create').handler({
+        data: {
+            kind: 'physical', name: 'Fs-notify wake desk', status: 'active', currency: 'CNY',
+            acquiredOn: '2026-08-19', categoryId: 'digital', tagIds: [], cover: { kind: 'none' },
+            notes: '', details: { warrantyEndsOn: null, costGoal: null },
+        },
+    }).then(body => {
+        createSettled = true;
+        return body;
+    });
+
+    const request = await waitPendingRequest(mock.storageMap, 5000, 'fs-notify wake pending request');
+
+    // completed 未写：WRITE / REMOVE / 非 fs-notify 事件都不得让 handler 误 settle。
+    mock.siyuan.event.handler({ type: 'fs-notify', detail: { operation: 'WRITE', path: 'assets.json' } });
+    mock.siyuan.event.handler({
+        type: 'fs-notify',
+        detail: { operation: 'REMOVE', path: 'agent-writes/completed/' + encodeURIComponent(request.id) + '.json' },
+    });
+    mock.siyuan.event.handler({ type: 'other-event' });
+    await new Promise(resolve => setTimeout(resolve, 60));
+    assert.equal(createSettled, false, 'wake without a completed file keeps waiting (no false settle)');
+
+    // 前端写 completed 后，用 Windows 反斜杠路径从 eventJs 参数位派发事件 → 立即唤醒重读。
+    // result.data 必须是完整资产对象（agent-actions 拿到后会做投影校验）。
+    putJson(mock.storageMap, requestFile(request.id, 'completed'), {
+        schemaVersion: 1, id: request.id, completedAt: new Date().toISOString(),
+        result: { ok: true, data: request.args[0] },
+    });
+    const dispatchedAt = Date.now();
+    mock.siyuan.event.handler(null, {
+        type: 'fs-notify',
+        detail: { operation: 'WRITE', path: 'agent-writes\\completed\\' + encodeURIComponent(request.id) + '.json' },
+    });
+    const body = await createPromise;
+    const elapsed = Date.now() - dispatchedAt;
+    assert.equal(body.ok, true, JSON.stringify(body));
+    assert.equal(body.data.name, 'Fs-notify wake desk');
+    assert.ok(elapsed < 200,
+        'fs-notify wakes the waiter promptly (' + elapsed + 'ms), well under the 250ms poll interval');
+
+    // 事件解析抛错不得外抛：handler 直接喂坏数据也必须安全。
+    assert.doesNotThrow(() => mock.siyuan.event.handler({ type: 'fs-notify', detail: { operation: 'WRITE' } }));
+    assert.doesNotThrow(() => mock.siyuan.event.handler(null, 'not-an-object'));
+
+    await global.siyuan.plugin.lifecycle.onunload();
+    assert.deepEqual(mock.siyuan.__fsNotify.removedPaths, ['agent-writes/completed'],
+        'watcher removed on unload');
+    assert.equal(mock.siyuan.event.handler, null, 'event handler restored on unload');
+}
+
 function testStaticAssertions() {
     const template = fs.readFileSync(path.join(ROOT, 'src.template.js'), 'utf8');
     assert.doesNotMatch(template, /this\.addAgentAction\(/, 'frontend no longer calls addAgentAction');
@@ -804,6 +892,7 @@ function testStaticAssertions() {
     testStaticAssertions();
     await testMcpRegistrationPriority();
     await testRegistrationRollbackAndRetry();
+    await testFsNotifyWake();
     console.log('[kernel-agent] passed');
 })().catch(error => {
     console.error('[kernel-agent] failed:', error && error.stack || error);
