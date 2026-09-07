@@ -4,20 +4,14 @@
 
 ## 中文
 
-### v2.6.5
-
-**适配思源笔记 3.8.3 + AI 操作响应提速**
-
-- 改进：适配思源笔记 3.8.3——AI 助手在最新版内核上可正常调用资产管理的各项工具；新版内核调整了插件工具的接入方式，插件已自动兼容，无需任何手动操作。
-- 改进：AI 修改资产（改名、调整状态、更新备注等）的响应更快——操作结果一经保存立即生效返回，无需等待固定间隔；在不支持该机制的环境中自动沿用原有方式，稳定性不受影响。
-- 构建：版本号升至 `2.6.5`，同步更新双语 README、构建产物和发布包。
-
 ### v2.6.4
 
-**筛选记忆与订阅月度支出修正**
+**筛选记忆、订阅月度支出修正与思源 3.8.3 AI 适配**
 
 - 改进：资产页会记住你上次选择的筛选——状态、类型、排序、标签，重新打开插件时自动恢复；例如选了「在役」，下次打开仍停在「在役」。
 - 修复：报表「订阅分析」中月度支出与日均不一致的问题——月度支出现在按当前订阅周期的实际长度换算，与日均口径一致；例如日均 0.55 元/天的订阅，月度约 16.7 元/月，不再出现翻倍数字。
+- 改进：适配思源笔记 3.8.3——AI 助手在最新版内核上可正常调用资产管理的各项工具；新版内核调整了插件工具的接入方式，插件已自动兼容，无需任何手动操作。
+- 改进：AI 修改资产（改名、调整状态、更新备注等）的响应更快——操作结果一经保存立即生效返回，无需等待固定间隔；在不支持该机制的环境中自动沿用原有方式，稳定性不受影响。
 - 构建：版本号升至 `2.6.4`，同步更新双语 README、构建产物和发布包。
 
 ### v2.6.3
@@ -292,20 +286,14 @@
 
 ## English
 
-### v2.6.5
-
-**SiYuan Notes 3.8.3 compatibility + faster AI actions**
-
-- Improved: compatibility with SiYuan Notes 3.8.3 — the AI assistant can call the asset management tools normally on the latest kernel; the new kernel changed how plugin tools are registered, and the plugin handles this automatically with no action needed.
-- Improved: AI edits to your assets (renaming, changing status, updating notes, and so on) now respond faster — results take effect as soon as they are saved, with no fixed waiting period; on environments that don't support this, the plugin automatically falls back to the previous behavior with no loss of stability.
-- Build: version bumped to `2.6.5`; bilingual READMEs, build artifacts, and the release package are synchronized.
-
 ### v2.6.4
 
-**Filter memory and subscription monthly spending fix**
+**Filter memory, subscription monthly spending fix, SiYuan 3.8.3 compatibility, and faster AI actions**
 
 - Improved: the asset page now remembers the filters you last chose — status, type, sort, and tags — and restores them the next time you open the plugin; for example, if you filtered by "Active", it stays on "Active" next time.
 - Fixed: monthly spending in the report's "Subscription analysis" no longer disagrees with the daily average — it is now converted by the actual length of the current subscription period, matching the daily average; a subscription costing about 0.55 yuan per day now shows roughly 16.7 yuan per month instead of a doubled figure.
+- Improved: compatibility with SiYuan Notes 3.8.3 — the AI assistant can call the asset management tools normally on the latest kernel; the new kernel changed how plugin tools are registered, and the plugin handles this automatically with no action needed.
+- Improved: AI edits to your assets (renaming, changing status, updating notes, and so on) now respond faster — results take effect as soon as they are saved, with no fixed waiting period; on environments that don't support this, the plugin automatically falls back to the previous behavior with no loss of stability.
 - Build: version bumped to `2.6.4`; bilingual READMEs, build artifacts, and the release package are synchronized.
 
 ### v2.6.3

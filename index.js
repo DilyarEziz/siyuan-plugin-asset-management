@@ -1,23 +1,12 @@
 /* eslint-disable no-undef */
 /**
- * SiYuan 资产管理插件 v2.6.5 — 主模板（不带 IIFE）
+ * SiYuan 资产管理插件 v2.6.4 — 主模板（不带 IIFE）
  *
  * 通过 scripts/concat.js 把 api/*.js 拼接在顶部，生成单文件 index.js。
  *
- * 功能（v0.14.0 + v0.15-T6 + v0.16-T1 / T3 / T5 / T6 / T7 + v0.17-T1-β / T1-γ / T1-δ + v0.17-Hotfix-A + v0.17-T3-α / T3-β + v1.1.0 + v1.2.0 + v1.3.0 + v1.4.0 + v1.5.0 + v1.6.0 + v1.7.0 + v2.3.0 + v2.4.0 + v2.4.1 + v2.4.2 + v2.5.0 + v2.6.0 + v2.6.1 + v2.6.3 + v2.6.4 + v2.6.5）：
+ * 功能（v0.14.0 + v0.15-T6 + v0.16-T1 / T3 / T5 / T6 / T7 + v0.17-T1-β / T1-γ / T1-δ + v0.17-Hotfix-A + v0.17-T3-α / T3-β + v1.1.0 + v1.2.0 + v1.3.0 + v1.4.0 + v1.5.0 + v1.6.0 + v1.7.0 + v2.3.0 + v2.4.0 + v2.4.1 + v2.4.2 + v2.5.0 + v2.6.0 + v2.6.1 + v2.6.3 + v2.6.4）：
  *
- * v2.6.5（思源 3.8.3 内核适配 + AI 写操作事件驱动唤醒）：
- *   - 思源 3.8.3 内核适配：内核 Agent 工具注册方式按内核版本自动兼容——
- *       siyuan.mcp.registerTool / unregisterTool 仅思源 3.8.1 提供（3.8.2 起
- *       内核已移除），3.8.2+ 自动改走 siyuan.agent.registerCapability；
- *       kernel.template.js 注册守卫与版本注释同步更新
- *   - AI 写操作事件驱动唤醒：kernel 侧注册 storage watcher + 事件回调，
- *       前端把写结果落盘 completed 后 kernel 立即重读返回（不再固定 sleep），
- *       原有 250ms 轮询保留为兜底；watcher 注册超时/失败或环境不支持时
- *       自动降级为纯轮询，行为与旧版一致
- *   - scripts/kernel-agent.test.js 新增事件驱动唤醒与降级回归用例
- *
- * v2.6.4（首页筛选记忆 + 订阅月度支出口径修复）：
+ * v2.6.4（首页筛选记忆 + 订阅月度支出口径修复 + 思源 3.8.3 内核适配 + AI 写操作事件驱动唤醒）：
  *   - 首页筛选记忆：手动改动状态 / 类型 / 排序 / 标签筛选后把快照写入
  *       settings.rememberedFilters 并立即保存；启动时优先恢复上次筛选快照，
  *       无记忆值回落设置页默认（defaultSort / defaultStatus）；设置保存与
@@ -27,6 +16,15 @@
  *       （当期金额 / 实际天数 × 月均天数），不再受名义账单周期影响；
  *       无覆盖当日的当期周期时贡献 0（api/report.js 聚合口径修改）
  *   - scripts/formal-report.test.js 新增月度折算回归用例
+ *   - 思源 3.8.3 内核适配（追加批次）：内核 Agent 工具注册方式按内核版本自动兼容——
+ *       siyuan.mcp.registerTool / unregisterTool 仅思源 3.8.1 提供（3.8.2 起
+ *       内核已移除），3.8.2+ 自动改走 siyuan.agent.registerCapability；
+ *       kernel.template.js 注册守卫与版本注释同步更新
+ *   - AI 写操作事件驱动唤醒（追加批次）：kernel 侧注册 storage watcher + 事件回调，
+ *       前端把写结果落盘 completed 后 kernel 立即重读返回（不再固定 sleep），
+ *       原有 250ms 轮询保留为兜底；watcher 注册超时/失败或环境不支持时
+ *       自动降级为纯轮询，行为与旧版一致
+ *   - scripts/kernel-agent.test.js 新增事件驱动唤醒与降级回归用例
  *
  * v2.6.3（报表分析卡片 + 汇率自动更新）：
  *   - 报表页新增「订阅分析」：订阅中 / 试用中 / 已停订数量、月度支出（按账单周期折算）、
@@ -8549,7 +8547,7 @@ const exchangeRateApi = __am_fx;
 const { Plugin, Dialog, Menu, openTab, openMobileFileById } = require("siyuan");
 
 const DOCK_TYPE = "asset-management-dock";
-const PLUGIN_VERSION = "2.6.5";
+const PLUGIN_VERSION = "2.6.4";
 const AUTHOR_URL = "https://ld246.com/member/Dilyar";
 const ICONS8_URL = "https://icons8.com";
 

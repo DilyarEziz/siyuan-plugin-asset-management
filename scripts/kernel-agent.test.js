@@ -109,7 +109,7 @@ function createSiyuanMock(mode, options) {
             async unregisterTool(name) { registry.delete(name); },
         };
     }
-    // v2.6.5-dev：可选的 fs-notify 环境（3.8.3 内核形态）。默认不启用，
+    // v2.6.4：可选的 fs-notify 环境（3.8.3 内核形态）。默认不启用，
     // 让既有用例继续覆盖“无 watcher API → 纯轮询降级”路径。
     if (testOptions.withFsNotify) {
         const watchedPaths = [];
@@ -782,7 +782,7 @@ async function testRegistrationRollbackAndRetry() {
 }
 
 /**
- * v2.6.5-dev：fs-notify 事件驱动写完成唤醒。
+ * v2.6.4：fs-notify 事件驱动写完成唤醒。
  * watcher 注册 + event.handler 安装 → 事件唤醒 waiter 立即重读（反斜杠路径归一化、
  * REMOVE/无关事件不误触发）→ onunload 移除 watcher 并还原 handler。
  */

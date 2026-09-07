@@ -11,7 +11,7 @@
  *     `siyuan.storage.put(path, jsonString)` 整文件覆盖写
  *   - 存储目录与前端插件共享：data/storage/petal/siyuan-plugin-asset-management/<path>
  *
- * 职责（v2.6.0 内核 Agent 工具；v2.6.5-dev 适配思源 3.8.3）：
+ * 职责（v2.6.0 内核 Agent 工具；v2.6.4 适配思源 3.8.3）：
  *   - onload 时注册 9 个资产工具。注册通道按运行时探测自动选择：
  *     siyuan.mcp.registerTool / unregisterTool 仅思源 3.8.1 提供，3.8.2 起内核已移除
  *     （3.8.3 源码 kernel 包零命中）；siyuan.agent.registerCapability 在 3.8.3 保留且
@@ -67,7 +67,7 @@
     var KERNEL_STATUS_FILE = 'agent-kernel-status.json';
     var WRITE_POLL_INTERVAL_MS = 250;
     var WRITE_TIMEOUT_MS = 30 * 1000;
-    // v2.6.5-dev：fs-notify 事件驱动唤醒的 watcher 注册超时保护；任何失败仅降级为纯轮询。
+    // v2.6.4：fs-notify 事件驱动唤醒的 watcher 注册超时保护；任何失败仅降级为纯轮询。
     var WRITE_FS_WATCH_TIMEOUT_MS = 3000;
 
     var WRITE_METHOD_NAMES = Object.freeze([
@@ -339,7 +339,7 @@
         await writeJson(WRITE_MANIFEST_FILE, manifest, deadline);
     }
 
-    // ---------- fs-notify 事件驱动写完成唤醒（v2.6.5-dev 适配思源 3.8.3） ----------
+    // ---------- fs-notify 事件驱动写完成唤醒（v2.6.4 适配思源 3.8.3） ----------
     //
     // 前端插件把 completed/<id>.json 写入后，内核通过 siyuan.storage.watcher 监听
     // agent-writes/completed 目录，收到 fs-notify 事件即唤醒对应 submitWrite 的
@@ -529,7 +529,7 @@
             if (completed.status !== 'missing') throw queueUnavailableError(completed.error);
             var remaining = deadline - Date.now();
             if (!(remaining > 0)) return writeTimeoutResult();
-            // v2.6.5-dev：fs-notify 事件驱动唤醒——前端写入 completed 后立即重读（不 sleep）；
+            // v2.6.4：fs-notify 事件驱动唤醒——前端写入 completed 后立即重读（不 sleep）；
             // waiter 未命中 / 事件驱动不可用时退回 250ms 兜底轮询，最坏性能与旧实现一致。
             var waiter = registerWriteCompletionWaiter(id);
             try {
@@ -820,7 +820,7 @@
         if (!siyuan.storage || typeof siyuan.storage.get !== 'function' || typeof siyuan.storage.put !== 'function') {
             throw new Error('siyuan.storage is unavailable; SiYuan 3.8.0+ kernel plugin runtime is required');
         }
-        // 版本事实（v2.6.5-dev）：siyuan.mcp.registerTool / unregisterTool 仅思源 3.8.1 提供，
+        // 版本事实（v2.6.4）：siyuan.mcp.registerTool / unregisterTool 仅思源 3.8.1 提供，
         // 3.8.2 起内核已移除（3.8.3 源码 kernel 包零命中）；本守卫在 3.8.2+ 上自动放行，
         // 由 registrationRuntime() 选择 siyuan.agent.registerCapability 分支（3.8.3 保留、config 兼容）。
         var hasMcp = siyuan.mcp && typeof siyuan.mcp.registerTool === 'function' && typeof siyuan.mcp.unregisterTool === 'function';
@@ -928,7 +928,7 @@
                 registeredAt: new Date().toISOString(),
                 tools: names,
             });
-            // v2.6.5-dev：工具注册成功后启用 fs-notify 写完成唤醒；
+            // v2.6.4：工具注册成功后启用 fs-notify 写完成唤醒；
             // setupWriteFsNotify 内部全量 catch，任何失败仅降级为 250ms 兜底轮询。
             await setupWriteFsNotify();
         } catch (error) {
@@ -977,7 +977,7 @@
     siyuan.plugin.lifecycle.onrunning = function () {};
 
     siyuan.plugin.lifecycle.onunload = async function () {
-        // v2.6.5-dev：先停 fs-notify（移除 watcher + 还原 handler + 清空 waiter），
+        // v2.6.4：先停 fs-notify（移除 watcher + 还原 handler + 清空 waiter），
         // 再逐个注销工具；清理路径全部 catch 包裹，不影响工具注销。
         await teardownWriteFsNotify();
         await unregisterAgentTools();
