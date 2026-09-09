@@ -18,6 +18,23 @@ const assert = require('node:assert/strict');
 const assetsApi = require('../api/assets');
 const storageApi = require('../api/storage');
 
+// linkedom Event 基线补丁（与 calendar-warranty-link.test.js 同源）：Node 24 上
+// Event 多个只读属性会被 linkedom dispatchEvent 赋值而抛错。表单提交路径内部
+// 会 dispatch input/change 事件，测试环境需要该补丁才能完整跑通 onsubmit。
+const BACKING = ['eventPhase', 'currentTarget', 'target', 'srcElement', 'bubbles',
+    'defaultPrevented', 'composed', 'timeStamp'];
+for (const key of BACKING) {
+    const desc = Object.getOwnPropertyDescriptor(Event.prototype, key);
+    if (!desc || desc.configurable === false) continue;
+    const storeKey = '__am_' + key;
+    Object.defineProperty(Event.prototype, key, {
+        get() { return this[storeKey]; },
+        set(value) { this[storeKey] = value; },
+        configurable: true,
+    });
+}
+const { createHarness, asset: harnessAsset } = require('./formal-workflow-harness');
+
 const NOW = '2026-09-09T00:00:00.000Z';
 const NOW_PLUS = '2026-09-09T01:00:00.000Z';
 const NOW_PLUS2 = '2026-09-09T02:00:00.000Z';
@@ -246,6 +263,86 @@ function directoryLog(id, type, entryId, label, field, oldValue, newValue, ts) {
     assert.equal(resetPlugin.state['dimensions.json'].schemaVersion, 1);
     const afterReset = await resetStorage.readFormalV2AssetDomainSnapshot();
     assert.deepEqual(afterReset.dimensions.brands, []);
+
+    // ---- 8. v2.6.5 修复回归：pending 品牌/途径 resolve 顺序 + 悬空 id 回显防御 ----
+    // 8a. 编辑表单 pending 新建品牌/途径：提交时必须落真实目录条目，
+    //     asset.brandId/channelId = 目录 id（不得保留表单上的临时 UUID）。
+    // 8b. 资产带悬空 brandId（目录中无此 id）：打开编辑表单必须显示未设置，
+    //     直接重新保存即自愈清除悬空引用。
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+    function openSheet(document, plugin, existing) {
+        plugin.openFormalAssetSheet('physical', { asset: existing || null, id: existing ? existing.id : '03000000-0000-4000-8000-000000000001' });
+        const mask = document.querySelector('.am-edit-sheet-mask');
+        if (!mask) throw new Error('physical edit sheet did not open');
+        mask.querySelectorAll('form').forEach(f => {
+            const elements = new Proxy({}, { get(_t, name) { return f.querySelector('[name="' + String(name) + '"]') || undefined; } });
+            Object.defineProperty(f, 'elements', { value: elements, configurable: true });
+            f.checkValidity = () => true;
+            f.reportValidity = () => {};
+        });
+        return mask;
+    }
+
+    function submitSheetForm(mask) {
+        const form = mask.querySelector('form');
+        return form.onsubmit({ preventDefault() {}, currentTarget: form });
+    }
+
+    function fillPendingDimension(mask, key, label) {
+        const root = mask.querySelector('[data-dimension-popover="' + key + '"]');
+        if (!root) throw new Error('missing dimension popover ' + key);
+        const input = root.querySelector('[data-dimension-new]');
+        input.value = label;
+        root.querySelector('[data-dimension-new-add]').onclick({ preventDefault() {}, stopPropagation() {} });
+    }
+
+    // 8a. pending 新建品牌 + 途径 → 提交 → 目录与资产外键落真实 id
+    {
+        const { plugin, state, document } = createHarness([]);
+        state['dimensions.json'] = { schemaVersion: 1, brands: [], channels: [], updatedAt: NOW };
+        plugin._brands = [];
+        plugin._channels = [];
+        const mask = openSheet(document, plugin, null);
+        fillPendingDimension(mask, 'brand', '小米');
+        fillPendingDimension(mask, 'channel', '京东');
+        const form = mask.querySelector('form');
+        const tempBrandId = form.getAttribute('data-selected-brand-id');
+        const tempChannelId = form.getAttribute('data-selected-channel-id');
+        assert.ok(UUID_RE.test(tempBrandId) && UUID_RE.test(tempChannelId),
+            'pending dimension picks carry temporary uuids on the form');
+        const nameInput = mask.querySelector('input[name="name"]');
+        nameInput.value = '小米相机';
+        await submitSheetForm(mask);
+        const dims = state['dimensions.json'];
+        const savedBrand = (dims.brands || []).find(entry => entry.label === '小米');
+        const savedChannel = (dims.channels || []).find(entry => entry.label === '京东');
+        assert.ok(savedBrand, 'submitting creates the pending brand directory entry');
+        assert.ok(savedChannel, 'submitting creates the pending channel directory entry');
+        const assets = await plugin.storage.readFormalV2Assets();
+        const saved = assets.find(item => item.name === '小米相机');
+        assert.ok(saved, 'asset persists after submit');
+        assert.notEqual(saved.brandId, tempBrandId, 'asset.brandId must not keep the temporary form uuid');
+        assert.notEqual(saved.channelId, tempChannelId, 'asset.channelId must not keep the temporary form uuid');
+        assert.equal(saved.brandId, savedBrand.id, 'asset.brandId resolves to the real brand directory entry');
+        assert.equal(saved.channelId, savedChannel.id, 'asset.channelId resolves to the real channel directory entry');
+    }
+
+    // 8b. 悬空 brandId：回显为未设置，直接重存自愈为 null
+    {
+        const dangling = harnessAsset('05000000-0000-4000-8000-000000000001', 'physical', 'Dangling Cam');
+        dangling.brandId = '99999999-9999-4999-8999-999999999999';
+        const { plugin, document } = createHarness([dangling]);
+        const mask = openSheet(document, plugin, dangling);
+        const form = mask.querySelector('form');
+        assert.equal(form.getAttribute('data-selected-brand-id'), '',
+            'a dangling brandId echoes back as unset instead of a dead selection');
+        await submitSheetForm(mask);
+        const assets = await plugin.storage.readFormalV2Assets();
+        const saved = assets.find(item => item.id === dangling.id);
+        assert.ok(saved, 'edited asset persists');
+        assert.equal(saved.brandId, null, 'resaving an echoed dangling brandId heals it to null');
+    }
 
     console.log('[formal-dimensions] passed');
 })().catch(error => { console.error(error); process.exit(1); });

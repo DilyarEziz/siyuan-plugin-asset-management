@@ -20751,9 +20751,17 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
                 return byLabel ? byLabel.id : null;
             }).filter(Boolean);
             /* v2.6.5 阶段2a：标签上限放开（目录上限由存储层统一约束），不做 UI 截断 */
-            /* v2.6.5 阶段2a：品牌 / 入手途径初始选中（单选，UUID 归一小写；空 = 未设置） */
-            const selectedBrandId = _isUuidNorm(asset.brandId) ? String(asset.brandId).trim().toLowerCase() : '';
-            const selectedChannelId = _isUuidNorm(asset.channelId) ? String(asset.channelId).trim().toLowerCase() : '';
+            /* v2.6.5 阶段2a：品牌 / 入手途径初始选中（单选，UUID 归一小写；空 = 未设置）。
+             * v2.6.5 修复：回显前校验 id 仍在目录中——历史悬空引用（bug 期写入的
+             * 未落目录 id）按未设置处理，表单诚实显示空，重新保存即自愈清除。 */
+            const _dimensionIdOrEmpty = (rawId, directoryKey) => {
+                const s = _isUuidNorm(rawId) ? String(rawId).trim().toLowerCase() : '';
+                if (!s) return '';
+                const dir = this._getDimensionDirectory(directoryKey);
+                return dir.some(entry => entry && entry.id === s) ? s : '';
+            };
+            const selectedBrandId = _dimensionIdOrEmpty(asset.brandId, 'brands');
+            const selectedChannelId = _dimensionIdOrEmpty(asset.channelId, 'channels');
             const dimensionKindMeta = [
                 { key: 'brand', directoryKey: 'brands', field: 'formFieldBrand', fieldText: '品牌', title: 'formBrandPickerTitle', titleText: '选择品牌', selected: selectedBrandId },
                 { key: 'channel', directoryKey: 'channels', field: 'formFieldChannel', fieldText: '入手途径', title: 'formChannelPickerTitle', titleText: '选择入手途径', selected: selectedChannelId },
@@ -21159,9 +21167,11 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
                             const dimensionAttr = dimensionKey === 'brand' ? 'data-selected-brand-id' : 'data-selected-channel-id';
                             const dimensionRaw = (form.getAttribute(dimensionAttr) || '').trim();
                             if (!dimensionRaw) return null;
-                            if (_isUuidSave(dimensionRaw)) return dimensionRaw.toLowerCase();
+                            /* v2.6.5 修复：pending 新建选中值是 createStableId() 临时 UUID，合法通过
+                             * _isUuidSave。必须先查 pendingDimensions 映射（与标签 resolve 同序），
+                             * 命中 label → find-or-create 真实目录条目；未命中才按静态目录 UUID 快路径。 */
                             const dimensionLabel = String(pendingDimensions[dimensionKey].get(dimensionRaw) || '').trim();
-                            if (!dimensionLabel) return null;
+                            if (dimensionLabel) {
                             return (async () => {
                                 const _findByLabel = () => this._getDimensionDirectory(directoryKey).find(entry => entry.label.toLowerCase() === dimensionLabel.toLowerCase());
                                 let _real = _findByLabel();
@@ -21177,6 +21187,9 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
                                 }
                                 return _real.id;
                             })();
+                            }
+                            if (_isUuidSave(dimensionRaw)) return dimensionRaw.toLowerCase();
+                            return null;
                         };
                         const _brandRef = _resolveDimensionRef('brand', 'brands', options => this.createBrand(options));
                         const brandId = (_brandRef && typeof _brandRef.then === 'function') ? await _brandRef : _brandRef;
