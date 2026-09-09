@@ -15025,6 +15025,30 @@
 .am-home-filter-dropdown--tag .am-home-filter-dropdown__tag-actions button { min-height: 26px; }
 
 /* ============================================================
+ * v2.6.5 阶段3c：筛选下拉三维 tab 排版 + 面板固定宽
+ * 用户反馈：标签/品牌/渠道三 tab 会换行、按钮偏大；已选 chips
+ *   增多时面板跟着变宽。
+ * 处理：面板固定 280px（本体已是 box-sizing: border-box，小屏由
+ *   inline maxWidth clamp 兜底，实际宽度 = min(width, max-width)）；
+ *   tab 行基类是 auto-fit grid（96px 最小列在 280px 内放不下三个
+ *   会折行），改 flex + nowrap 固定一排三个；tab 按钮压成药丸
+ *   圆角 + 小字号小内边距。选择器带 --tag/--filter 作用域，
+ *   不触碰 .am-type-pill 本体，表单里的订阅/买断切换不受影响。
+ * ============================================================ */
+.am-home-filter-dropdown--tag { width: 280px; }
+.am-home-filter-dropdown--tag .am-type-pill-row--filter { display: flex; flex-wrap: nowrap; gap: 6px; }
+.am-home-filter-dropdown--tag .am-type-pill-row--filter .am-type-pill {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    border-radius: 999px;
+    font-size: 12px;
+    padding: 5px 8px;
+    white-space: nowrap;
+    text-align: center;
+}
+
+/* ============================================================
  * v2.3.0-hotfix：自定义颜色槽 × 删除徽标
  * 桌面 hover/focus 显现；触屏常显（hover:none）。删除后该色
  * 回填输入框，调整再存即「修改」。暗色提亮底色。

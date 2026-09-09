@@ -4347,8 +4347,13 @@ _closeHomeFilterDropdown(expectedDropdown) {
             dropdown.style.maxWidth = `${Math.floor(availableWidth)}px`;
             dropdown.style.maxHeight = `${Math.max(44, Math.floor(viewportHeight - rect.bottom - edge - 2))}px`;
             /* v2.3.0-hotfix：tag 面板 minWidth 196→164，配合头部文字缩小整体收窄。
-               v2.6.5 阶段3b：面板加三 tab（标签/品牌/渠道）后 164 过窄，放宽到 220。 */
-            dropdown.style.minWidth = `${Math.min(Math.max(Math.round(rect.width), kind === 'tag' ? 220 : 152), availableWidth)}px`;
+               v2.6.5 阶段3b：面板加三 tab（标签/品牌/渠道）后 164 过窄，放宽到 220。
+               v2.6.5 阶段3c：tag 面板改固定宽度 280px（CSS .am-home-filter-dropdown--tag
+               的 width），已选 chips 增多不再撑宽；不设 inline minWidth，防小屏溢出
+               仍由上方 maxWidth=可用宽度 clamp 兜底。其余下拉维持 minWidth 不变。 */
+            if (kind !== 'tag') {
+                dropdown.style.minWidth = `${Math.min(Math.max(Math.round(rect.width), 152), availableWidth)}px`;
+            }
             const dropdownWidth = Math.min(dropdown.offsetWidth || rect.width, availableWidth);
             /* v2.3.0 阶段4.1：tag 下拉右对齐（右边缘 = trigger 右边缘），其余下拉左对齐 trigger；
                最后在 [boundLeft, boundRight] 内统一 clamp（dropdownWidth ≤ availableWidth 恒成立，clamp 不越界）。 */
@@ -4421,7 +4426,7 @@ _closeHomeFilterDropdown(expectedDropdown) {
                 channel: this._t('reportDimensionTabChannel', '渠道'),
             };
             const dimensionEmptyKeys = { tag: ['tagFilterEmpty', '暂无标签'], brand: ['filterBrandEmpty', '暂无品牌'], channel: ['filterChannelEmpty', '暂无购买渠道'] };
-            const tabsHtml = `<div class="am-type-pill-row" data-type-pill-row>${FILTER_DIMENSIONS.map(key => `<button type="button" class="am-type-pill" aria-pressed="${key === dim ? 'true' : 'false'}" data-dim-tab="${key}">${escapeHtml(dimensionLabels[key])}</button>`).join('')}</div>`;
+            const tabsHtml = `<div class="am-type-pill-row am-type-pill-row--filter" data-type-pill-row>${FILTER_DIMENSIONS.map(key => `<button type="button" class="am-type-pill" aria-pressed="${key === dim ? 'true' : 'false'}" data-dim-tab="${key}">${escapeHtml(dimensionLabels[key])}</button>`).join('')}</div>`;
             const selectedIds = dimensionSelectedIds(dim);
             const entries = dimensionCatalog(dim);
             const entriesHtml = entries.length
