@@ -8551,10 +8551,17 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
         const wishlistCreatedDate = isWish ? String(asset.createdAt || asset.updatedAt || '').slice(0, 10) : '';
         const costGoal = (!isWish && vm.projection) ? vm.projection.costGoal : null;
         const costsHtml = isWish ? '' : `<div class="am-product-card__costs"><div class="am-product-card__price">${fmt(acqMinor)}</div>${this._cnyApproxHtml(acqMinor, currency)}${dailyMinor != null ? `<div class="am-product-card__daily">${fmt(dailyMinor)}${perDay}</div>` : ''}</div>`;
+        // v2.6.5 实测反馈：基础区追加品牌 / 入手途径行——仅 owned 且已设置（目录能反查到）时渲染，
+        // null 不渲染避免空行；色点复用目录色（与报表排行行同一套行内小圆点样式）。
+        const dimensionColorDot = color => color ? `<span class="am-tag-popover__option-color" style="display:inline-block;vertical-align:middle;margin-right:6px;background:${escapeHtml(color)}"></span>` : '';
+        const brandEntry = (!isWish && asset.brandId && Array.isArray(this._brands)) ? this._brands.find(entry => entry && entry.id === asset.brandId) : null;
+        const channelEntry = (!isWish && asset.channelId && Array.isArray(this._channels)) ? this._channels.find(entry => entry && entry.id === asset.channelId) : null;
         const baseRows = row(this._t('productDetailType', '类型'), groupLabel)
             + (wishlistCreatedDate ? row(this._t('wishlistPlantedDate', '种草日期'), escapeHtml(wishlistCreatedDate)) : '')
             + (asset.acquiredOn ? row(this._t('productDetailStartDate', '开始日期'), escapeHtml(asset.acquiredOn)) : '')
-            + (companionDays != null ? row(this._t('productMetricDays', '陪伴'), `${companionDays} ${escapeHtml(this._t('daysUnit', '天'))}`) : '');
+            + (companionDays != null ? row(this._t('productMetricDays', '陪伴'), `${companionDays} ${escapeHtml(this._t('daysUnit', '天'))}`) : '')
+            + (brandEntry ? row(this._t('productBrand', '品牌'), `${dimensionColorDot(brandEntry.color)}${escapeHtml(brandEntry.label)}`) : '')
+            + (channelEntry ? row(this._t('productChannel', '入手途径'), `${dimensionColorDot(channelEntry.color)}${escapeHtml(channelEntry.label)}`) : '');
         const costRows = isWish
             ? `<div class="am-product-empty-bar">${escapeHtml(this._t('productEmptyCost', '暂无成本信息'))}</div>`
             : row(this._t('productCostPrice', '价格'), fmt(acqMinor))
@@ -11108,8 +11115,11 @@ closeProductCard() {
             ['brands', 'settingsCatalogTabBrands', '品牌'],
             ['channels', 'settingsCatalogTabChannels', '途径'],
         ];
-        const catalogTabsHtml = `<div class="am-settings-catalog-tabs" role="tablist">${tabDefs.map(([key, i18nKey, fallback]) =>
-            `<button type="button" role="tab" aria-selected="${key === catalogTab ? 'true' : 'false'}" class="am-settings-catalog-tab${key === catalogTab ? ' is-active' : ''}" data-settings-catalog-tab="${key}">${escapeHtml(this._t(i18nKey, fallback))}</button>`).join('')}</div>`;
+        // v2.6.5 实测反馈：子 tab 改用表单预付 / 买断切换同款 pill 外壳（am-type-pill-row + am-type-pill
+        // + aria-pressed，参照编辑表单 switch-kind 结构）；选中态仍由 _settingsCatalogTab 驱动，
+        // data-settings-catalog-tab 属性保持不变，事件绑定选择器不受影响。
+        const catalogTabsHtml = `<div class="am-type-pill-row" data-type-pill-row>${tabDefs.map(([key, i18nKey, fallback]) =>
+            `<button type="button" class="am-type-pill" aria-pressed="${key === catalogTab ? 'true' : 'false'}" data-settings-catalog-tab="${key}">${escapeHtml(this._t(i18nKey, fallback))}</button>`).join('')}</div>`;
         let bodyHtml = '';
         if (catalogTab === 'tags') {
             const tags = this._getAssetTagCatalog();
@@ -13344,6 +13354,16 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
                     if (dimensionNewAdd) dimensionNewAdd.onclick = event => { event.preventDefault(); event.stopPropagation(); commitDimensionNew(); };
                     if (dimensionNewInput) dimensionNewInput.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); commitDimensionNew(); } });
                 });
+                // v2.6.5 实测反馈：品牌 / 途径 popover 点击面板外部时自动收起（与标签 popover 同构）。
+                // 用捕获阶段监听：面板内部 mousedown 已被 stopPropagation，捕获仍能先命中，
+                // 借 contains 判断保证「点本面板内（含输入框）不关、点另一个 popover 或外部则收起」。
+                mask.addEventListener('mousedown', event => {
+                    mask.querySelectorAll('[data-dimension-popover]').forEach(dimensionRoot => {
+                        const panel = dimensionRoot.querySelector('[data-dimension-popover-panel]');
+                        if (!panel || panel.hidden) return;
+                        if (!dimensionRoot.contains(event.target)) panel.hidden = true;
+                    });
+                }, true);
                 const formElement = mask.querySelector('form');
                 // Disable browser constraint bubbles; validation is rendered by the plugin.
                 formElement.noValidate = true;
