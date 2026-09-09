@@ -682,6 +682,9 @@
     color: var(--b3-theme-on-surface-light, #888);
     border-color: rgba(255, 255, 255, 0.08);
 }
+/* v2.6.5 实测反馈：首页筛选下拉头部已选摘要 chips（复用 am-asset-tag 底色，点击移除） */
+.am-home-filter-dropdown__chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px 0; }
+.am-home-filter-dropdown__chips .am-asset-tag { font: inherit; font-size: 10px; cursor: pointer; }
 
 /* ===== v0.12.9 目标日均价达标进度 ===== */
 .am-asset-progress {
