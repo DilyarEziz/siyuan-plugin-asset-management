@@ -21085,7 +21085,17 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
                         opt.setAttribute('data-dimension-pick', tempId);
                         opt.setAttribute('aria-pressed', 'true');
                         opt.innerHTML = '<span class="am-tag-popover__option-color" style="background:#3575f3"></span><span>🆕 ' + escapeHtml(label) + '</span>';
-                        opt.onclick = () => { if (dimensionForm.getAttribute(dimensionAttr) === tempId) { dimensionPending.delete(tempId); if (opt.parentNode) opt.parentNode.removeChild(opt); setSelectedDimension(''); } };
+                        opt.onclick = () => {
+                            if (dimensionForm.getAttribute(dimensionAttr) === tempId) {
+                                // Already selected: treat as cancel, remove the pending entry.
+                                dimensionPending.delete(tempId);
+                                if (opt.parentNode) opt.parentNode.removeChild(opt);
+                                setSelectedDimension('');
+                            } else {
+                                // Re-select a pending entry after picking another option.
+                                setSelectedDimension(tempId);
+                            }
+                        };
                         const optsBox = dimensionPanel.querySelector('.am-tag-popover__options');
                         if (optsBox) optsBox.appendChild(opt);
                         setSelectedDimension(tempId);

@@ -344,5 +344,46 @@ function directoryLog(id, type, entryId, label, field, oldValue, newValue, ts) {
         assert.equal(saved.brandId, null, 'resaving an echoed dangling brandId heals it to null');
     }
 
+    // 8c. v2.6.5 修复回归：pending 新建项在切到其他条目后仍可重新选中。
+    //     复现路径：新建 pending（自动选中）→ 点静态项切走 → 再点 pending 项必须重新选中；
+    //     选中态再点 pending 项仍为取消语义（移除条目 + 清选）。
+    {
+        const HUAWEI_ID = '06000000-0000-4000-8000-000000000001';
+        const { plugin, state, document } = createHarness([]);
+        state['dimensions.json'] = { schemaVersion: 1, brands: [{ id: HUAWEI_ID, label: '华为' }], channels: [], updatedAt: NOW };
+        plugin._brands = [{ id: HUAWEI_ID, label: '华为' }];
+        plugin._channels = [];
+        const mask = openSheet(document, plugin, null);
+        const root = mask.querySelector('[data-dimension-popover="brand"]');
+        const form = mask.querySelector('form');
+        const summary = () => root.querySelector('[data-dimension-popover-summary]').textContent;
+
+        // pending 新建「苹果」→ 自动选中
+        fillPendingDimension(mask, 'brand', '苹果');
+        const pendingId = form.getAttribute('data-selected-brand-id');
+        assert.ok(UUID_RE.test(pendingId), 'pending creation selects the temporary entry');
+        const pendingOpt = root.querySelector('[data-dimension-pick="' + pendingId + '"]');
+        assert.ok(pendingOpt, 'pending option is rendered in the popover');
+
+        // 点静态「华为」切走
+        root.querySelector('[data-dimension-pick="' + HUAWEI_ID + '"]').onclick();
+        assert.equal(form.getAttribute('data-selected-brand-id'), HUAWEI_ID, 'static option takes over the selection');
+
+        // 再点 pending 项 → 必须重新选中（v2.6.5 修复点）
+        pendingOpt.onclick();
+        assert.equal(form.getAttribute('data-selected-brand-id'), pendingId,
+            'clicking the pending option again re-selects it after a static pick');
+        assert.equal(summary(), '苹果', 'summary shows the pending label');
+        assert.equal(pendingOpt.getAttribute('aria-pressed'), 'true', 'pending option reflects the pressed state');
+        assert.equal(root.querySelector('[data-dimension-pick="' + HUAWEI_ID + '"]').getAttribute('aria-pressed'), 'false',
+            'static option is unpressed after re-selecting the pending entry');
+
+        // 选中态再点 pending 项 → 取消：移除条目并清选
+        pendingOpt.onclick();
+        assert.equal(form.getAttribute('data-selected-brand-id'), '', 'clicking a selected pending entry clears the selection');
+        assert.equal(root.querySelector('[data-dimension-pick="' + pendingId + '"]'), null,
+            'cancelling removes the pending entry from the popover');
+    }
+
     console.log('[formal-dimensions] passed');
 })().catch(error => { console.error(error); process.exit(1); });
