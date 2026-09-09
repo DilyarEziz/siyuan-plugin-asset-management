@@ -40,7 +40,9 @@ function oldState() {
     for (const [key, definition] of Object.entries(FORMAL_SIDECAR_DEFINITIONS)) {
         state[definition.file] = definition.objectPayload
             ? { schemaVersion: 99, rates: { USD: 1 } }
-            : { schemaVersion: 99, [definition.recordKey]: [{ id: key + '-old' }] };
+            : definition.dimensionsPayload
+                ? { schemaVersion: 99, brands: [{ id: key + '-old' }], channels: [] }
+                : { schemaVersion: 99, [definition.recordKey]: [{ id: key + '-old' }] };
     }
     return state;
 }
@@ -73,7 +75,13 @@ async function storageContract() {
     for (const [key, definition] of Object.entries(FORMAL_SIDECAR_DEFINITIONS)) {
         const payload = state[definition.file];
         assert.equal(payload.schemaVersion, 1, key + ' has a formal wrapper');
-        assert.deepEqual(definition.objectPayload ? payload.rates : payload[definition.recordKey], definition.objectPayload ? {} : [], key + ' is empty');
+        const emptyPayload = definition.objectPayload ? payload.rates
+            : definition.dimensionsPayload ? [payload.brands, payload.channels]
+                : payload[definition.recordKey];
+        const emptyExpected = definition.objectPayload ? {}
+            : definition.dimensionsPayload ? [[], []]
+                : [];
+        assert.deepEqual(emptyPayload, emptyExpected, key + ' is empty');
     }
     const settings = state[STORAGE_FILES.settings];
     assert.equal(settings.defaultSort, beforeSettings.defaultSort);
@@ -86,7 +94,7 @@ async function storageContract() {
     assert.equal(settings.filters, undefined, 'runtime filters are removed');
     assert.equal(settings.runtime, undefined, 'runtime state is removed');
     assert.equal(writes.some(name => String(name).startsWith('backups/')), false, 'reset never creates backups');
-    assert.equal(writes.length, 12, 'all 11 formal domain files and settings are committed exactly once');
+    assert.equal(writes.length, 13, 'all 12 formal domain files and settings are committed exactly once');
 }
 
 async function rollbackContract() {

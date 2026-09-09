@@ -19,6 +19,7 @@
  *     （asset_query / asset_create / asset_update / asset_lifecycle / asset_record / asset_price_update / asset_delete / asset_tag_update / asset_tag_create），
  *     最终暴露名 plugin__siyuan-plugin-asset-management__<name>（前缀内核自动加），内置 Agent 与 MCP 均可调用
  *   - 查询类工具实时读 storage 投影（复用 api/agent-actions.js 的脱敏投影）
+ *   - v2.6.5 阶段4：asset_query op=tags 同时返回品牌 / 途径目录（dimensions.json）
  *   - 写入类工具经 agent-writes/pending/<requestId>.json 文件桥转发，
  *     由前端插件（index.js 轮询）委托既有业务方法执行后写回 completed/<requestId>.json
  */
@@ -34,6 +35,7 @@
         assets: 'assets.json',
         settings: 'settings.json',
         tags: 'tags.json',
+        dimensions: 'dimensions.json',
         maintenance: 'maintenance.json',
         usage: 'usage.json',
         operationLogs: 'operationLogs.json',
@@ -206,6 +208,21 @@
         return wrapper[envelopeKey];
     }
 
+    // v2.6.5 阶段4：dimensions.json 双目录（brands/channels）宽松读。整文件缺失
+    // → 空目录（旧快照容忍，与前端 readStrictFormalDimensions 缺文件语义一致）；
+    // 形状异常 → fail-closed（DOMAIN_UNAVAILABLE），条目级过滤交给
+    // agent-actions.safeDimensionCatalog 的脱敏投影。
+    async function readDimensionsWrapper() {
+        var record = await readJsonState(KERNEL_STORAGE_FILES.dimensions);
+        if (record.status === 'missing') return { brands: [], channels: [] };
+        if (record.status !== 'valid') throw domainUnavailableError(record.error);
+        var wrapper = record.value;
+        if (!wrapper || typeof wrapper !== 'object' || !Array.isArray(wrapper.brands) || !Array.isArray(wrapper.channels)) {
+            throw domainUnavailableError(new Error('unexpected storage shape: ' + KERNEL_STORAGE_FILES.dimensions));
+        }
+        return { brands: wrapper.brands, channels: wrapper.channels };
+    }
+
     async function readAgentDomain() {
         var domain = {};
         domain.assets = await readWrapperArray(KERNEL_STORAGE_FILES.assets, 'assets', true);
@@ -214,6 +231,7 @@
         await Promise.all(DOMAIN_RECORD_FILES.map(async function (entry) {
             domain[entry[0]] = await readWrapperArray(entry[1], entry[2]);
         }));
+        domain.dimensions = await readDimensionsWrapper();
         if (!agentActions.completeDomain(domain)) throw domainUnavailableError(new Error('domain incomplete'));
         return domain;
     }
@@ -243,6 +261,10 @@
             wishlistEvents: [],
             operationLogs: [],
         };
+        // v2.6.5 阶段4：tags op 现同时返回品牌 / 途径目录，需要读 dimensions.json。
+        domain.dimensions = op === 'tags'
+            ? await readDimensionsWrapper()
+            : { brands: [], channels: [] };
         if (!agentActions.completeDomain(domain)) throw domainUnavailableError(new Error('query domain incomplete'));
         return domain;
     }
@@ -662,7 +684,7 @@
                     type: 'object',
                     properties: {
                         action: actionSchema('query'),
-                        op: stringEnumSchema(['count', 'search', 'detail', 'summary', 'tags'], 'Query operation'),
+                        op: stringEnumSchema(['count', 'search', 'detail', 'summary', 'tags'], 'Query operation (tags also returns brand/channel catalogs)'),
                         locale: stringEnumSchema(['zh_CN', 'zh-CN', 'en_US', 'en-US'], 'Display locale (default zh_CN)'),
                         assetId: stringSchema('Exact lowercase asset UUID (detail only)'),
                         search: stringSchema('Name substring filter'),

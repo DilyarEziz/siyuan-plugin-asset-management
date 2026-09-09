@@ -4,6 +4,17 @@
 
 ## 中文
 
+### v2.6.5
+
+**品牌与入手途径、筛选升级与报表维度分析**
+
+- 新增：资产可标注品牌和入手途径——品牌如小米、华为，途径如京东、淘宝、线下；编辑资产时在「品牌」「入手途径」栏选择或新建，条目名称和颜色都支持自定义。
+- 新增：首页「筛选」升级为标签、品牌、途径三组可切换的多选筛选，三组之间可自由交叉组合——例如同时勾选「小米」和「京东」，只看从京东买的小米产品。
+- 新增：报表新增「维度分析」——按品牌、按入手途径的花费排行，点击条目即可查看对应资产的明细；可在设置里选择显示哪些排行板块。
+- 改进：标签数量限制取消，想加几个加几个。
+- 改进：表单必填项带红点标识，选填项无需填写，哪些必须填一眼便知。
+- 构建：版本号升至 `2.6.5`，同步更新双语 README、构建产物和发布包。
+
 ### v2.6.4
 
 **筛选记忆、订阅月度支出修正与思源 3.8.3 AI 适配**
@@ -285,6 +296,17 @@
 - 编辑预付权益时，价格字段预填首笔购买金额。
 
 ## English
+
+### v2.6.5
+
+**Brands & purchase channels, upgraded filters, and report dimension analysis**
+
+- New: tag each asset with a brand (e.g. Xiaomi, Huawei) and a purchase channel (e.g. Amazon, a local store). Pick an existing entry or create your own right in the asset editor, with custom names and colors.
+- New: the home filter now offers three switchable groups — tags, brands, and purchase channels — each with multi-select, and they combine freely. For example, select "Xiaomi" AND "Amazon" to see only Xiaomi items bought there.
+- New: reports gain "Dimension analysis" — spending rankings by brand and by purchase channel. Tap an entry to view the underlying assets, and choose which rankings to show in Settings.
+- Improved: the tag limit is gone — add as many tags as you like.
+- Improved: required form fields are now marked with a red dot, so you can see at a glance what must be filled in; optional fields can be left empty.
+- Build: version bumped to `2.6.5`; bilingual READMEs, build artifacts, and the release package are synchronized.
 
 ### v2.6.4
 

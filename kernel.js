@@ -19,6 +19,7 @@
  *     （asset_query / asset_create / asset_update / asset_lifecycle / asset_record / asset_price_update / asset_delete / asset_tag_update / asset_tag_create），
  *     最终暴露名 plugin__siyuan-plugin-asset-management__<name>（前缀内核自动加），内置 Agent 与 MCP 均可调用
  *   - 查询类工具实时读 storage 投影（复用 api/agent-actions.js 的脱敏投影）
+ *   - v2.6.5 阶段4：asset_query op=tags 同时返回品牌 / 途径目录（dimensions.json）
  *   - 写入类工具经 agent-writes/pending/<requestId>.json 文件桥转发，
  *     由前端插件（index.js 轮询）委托既有业务方法执行后写回 completed/<requestId>.json
  */
@@ -1469,6 +1470,7 @@ const FORMAL_V2_OWNED_KEYS = Object.freeze([
     'acquiredOn', 'statusChangedOn', 'categoryId', 'tagIds', 'cover', 'notes',
     'createdAt', 'updatedAt', 'details',
     'indexBlockId', 'relatedNotes',
+    'brandId', 'channelId',
 ]);
 const FORMAL_V2_WISHLIST_KEYS = Object.freeze([
     'id', 'kind', 'name', 'status', 'currency', 'cover',
@@ -1547,8 +1549,16 @@ function normalizeFormalTagIds(value) {
         }
         return result;
     }, []);
-    if (normalized.length > 3) throw formalError('tagIds must contain at most 3 tags');
+    if (normalized.length > 32) throw formalError('tagIds must contain at most 32 tags');
     return normalized;
+}
+
+function normalizeFormalDirectoryRef(value, path) {
+    if (value == null) return null;
+    if (typeof value !== 'string' || !isUUID(value.trim())) {
+        throw formalError(path + ' must be a UUID or null');
+    }
+    return value.trim().toLowerCase();
 }
 
 function normalizeFormalCategoryId(kind, value) {
@@ -1748,6 +1758,8 @@ function normalizeFormalV2Asset(value, options) {
     return Object.assign({}, baseFields, {
         categoryId: normalizeFormalCategoryId(kind, source.categoryId),
         tagIds: normalizeFormalTagIds(source.tagIds),
+        brandId: normalizeFormalDirectoryRef(source.brandId, 'brandId'),
+        channelId: normalizeFormalDirectoryRef(source.channelId, 'channelId'),
         notes: formalString(source.notes, '', 5000, false, 'notes'),
         acquiredOn: formalDate(source.acquiredOn, opts.today || now, false, 'acquiredOn', formalHasOwn(source, 'acquiredOn')),
         statusChangedOn: formalDate(source.statusChangedOn, opts.today || now, false, 'statusChangedOn', formalHasOwn(source, 'statusChangedOn')),
@@ -1779,6 +1791,13 @@ function validateFormalV2Asset(value) {
             if (!Object.prototype.hasOwnProperty.call(expected, 'indexBlockId')) expected.indexBlockId = null;
             if (!Object.prototype.hasOwnProperty.call(expected, 'relatedNotes')) expected.relatedNotes = [];
         }
+        if (expected.status !== ASSET_STATUS.WISHLIST
+            && (!Object.prototype.hasOwnProperty.call(expected, 'brandId')
+                || !Object.prototype.hasOwnProperty.call(expected, 'channelId'))) {
+            expected = Object.assign({}, expected);
+            if (!Object.prototype.hasOwnProperty.call(expected, 'brandId')) expected.brandId = null;
+            if (!Object.prototype.hasOwnProperty.call(expected, 'channelId')) expected.channelId = null;
+        }
         const exact = formalDeepEqual(normalized, expected);
         return validationResult(exact ? [] : ['asset must already be in canonical formal-v2 form']);
     } catch (error) {
@@ -1796,7 +1815,7 @@ function normalizeFormalV2AssetPatch(asset, patch) {
     }
     const allowed = current.status === ASSET_STATUS.WISHLIST
         ? ['name', 'status', 'currency', 'cover', 'updatedAt', 'wishlist']
-        : ['name', 'status', 'currency', 'acquiredOn', 'statusChangedOn', 'categoryId', 'tagIds', 'cover', 'notes', 'updatedAt', 'details', 'indexBlockId', 'relatedNotes'];
+        : ['name', 'status', 'currency', 'acquiredOn', 'statusChangedOn', 'categoryId', 'tagIds', 'cover', 'notes', 'updatedAt', 'details', 'indexBlockId', 'relatedNotes', 'brandId', 'channelId'];
     assertFormalKnownKeys(source, allowed, 'patch');
     const result = Object.assign({}, source);
     if (Object.prototype.hasOwnProperty.call(source, 'details')) {
@@ -2237,6 +2256,14 @@ function applyFilter(assets, filter) {
     if (Array.isArray(filter.tagIds) && filter.tagIds.length > 0) {
         const ids = new Set(filter.tagIds.map(id => String(id).trim().toLowerCase()));
         list = list.filter(a => Array.isArray(a.tagIds) && a.tagIds.some(id => ids.has(id)));
+    }
+    if (Array.isArray(filter.brandIds) && filter.brandIds.length > 0) {
+        const brandIds = new Set(filter.brandIds.map(id => String(id).trim().toLowerCase()));
+        list = list.filter(a => a.brandId != null && brandIds.has(a.brandId));
+    }
+    if (Array.isArray(filter.channelIds) && filter.channelIds.length > 0) {
+        const channelIds = new Set(filter.channelIds.map(id => String(id).trim().toLowerCase()));
+        list = list.filter(a => a.channelId != null && channelIds.has(a.channelId));
     }
     return sortAssets(list, filter.sort || 'default', filter.financialEvents);
 }
@@ -2726,6 +2753,8 @@ function buildFormalReport(snapshot, filterInput, options) {
         assets: cards,
         counts: { total: cards.length, byKind: createDict(), byStatus: createDict() },
         tags: { uniqueCount: 0, byTagId: createDict() },
+        brand: { uniqueCount: 0, byId: createDict() },
+        channel: { uniqueCount: 0, byId: createDict() },
         amounts: {
             acquisitionByCurrency: createDict(),
             netByCurrency: createDict(),
@@ -2775,6 +2804,12 @@ function buildFormalReport(snapshot, filterInput, options) {
     report.wishlist.purchaseRate = wishlistIds.size ? purchasedIds.size / wishlistIds.size : 0;
     report.wishlist.abandonRate = wishlistIds.size ? abandonedIds.size / wishlistIds.size : 0;
 
+    const dimensionRefsByAssetId = createDict();
+    selected.forEach(asset => {
+        if (asset.brandId == null && asset.channelId == null) return;
+        dimensionRefsByAssetId[asset.id] = { brandId: asset.brandId, channelId: asset.channelId };
+    });
+
     cards.forEach(card => {
         incrementFormalGroup(report.counts.byKind, card.kind, 'counts.byKind');
         incrementFormalGroup(report.counts.byStatus, card.status, 'counts.byStatus');
@@ -2783,6 +2818,17 @@ function buildFormalReport(snapshot, filterInput, options) {
             report.tags.byTagId[tagId].count = safeAddFormal(report.tags.byTagId[tagId].count, 1, 'tags.count');
             report.tags.byTagId[tagId].assetIds.push(card.id);
         });
+        const dimensionRefs = dimensionRefsByAssetId[card.id];
+        if (dimensionRefs) {
+            ['brandId', 'channelId'].forEach(refKey => {
+                const refValue = dimensionRefs[refKey];
+                if (refValue == null) return;
+                const group = refKey === 'brandId' ? report.brand.byId : report.channel.byId;
+                if (!hasOwn(group, refValue)) group[refValue] = { count: 0, assetIds: [] };
+                group[refValue].count = safeAddFormal(group[refValue].count, 1, refKey + '.count');
+                group[refValue].assetIds.push(card.id);
+            });
+        }
         incrementFormalMinorBucket(report.amounts.acquisitionByCurrency, card.currency, 'amountMinor', card.acquisition.amountMinor, 'assetCount');
         if (card.status === ASSET_STATUS.ACTIVE) {
             if (!hasOwn(report.amounts.netByCurrency, card.currency)) report.amounts.netByCurrency[card.currency] = {
@@ -3010,6 +3056,8 @@ function buildFormalReport(snapshot, filterInput, options) {
             report.dataCoverage.lifecycleEvents.selected, 1, 'lifecycleEvents.selected');
     });
     report.tags.uniqueCount = Object.keys(report.tags.byTagId).length;
+    report.brand.uniqueCount = Object.keys(report.brand.byId).length;
+    report.channel.uniqueCount = Object.keys(report.channel.byId).length;
     Object.keys(report.rankings.byCurrency).forEach(currency => report.rankings.byCurrency[currency].sort((left, right) => {
         if (left.netAmountMinor === right.netAmountMinor) return left.name.localeCompare(right.name);
         return left.netAmountMinor < right.netAmountMinor ? 1 : -1;
@@ -3240,8 +3288,8 @@ const AGENT_ERROR_DEFINITIONS = Object.freeze({
         'zh-CN': { message: '资产引用的标签不存在。', recovery: '使用 asset_tag_create 传入准确标签名创建并绑定后重试。' },
     },
     TAG_LIMIT_EXCEEDED: {
-        'en-US': { message: 'An asset can have at most three tags.', recovery: 'Remove a tag or replace the tags with no more than three exact labels, then retry.' },
-        'zh-CN': { message: '每个资产最多绑定 3 个标签。', recovery: '先移除标签，或用不超过 3 个准确标签执行替换后重试。' },
+        'en-US': { message: 'An asset can have at most 32 tags.', recovery: 'Remove a tag or replace the tags with no more than 32 exact labels, then retry.' },
+        'zh-CN': { message: '每个资产最多绑定 32 个标签。', recovery: '先移除标签，或用不超过 32 个准确标签执行替换后重试。' },
     },
     INVALID_PAGINATION: {
         'en-US': { message: 'The search paging values are invalid.', recovery: 'Use a non-negative offset and a page size within the supported limit.' },
@@ -3819,6 +3867,35 @@ function safeTagCatalog(tags) {
     })).filter(tag => tag.id && tag.label);
 }
 
+function safeDimensionCatalog(dimensions) {
+    const wrapper = isPlainObject(dimensions) ? dimensions : {};
+    const project = entries => (Array.isArray(entries) ? entries : []).map(entry => ({
+        id: entry && typeof entry.id === 'string' ? entry.id : '',
+        label: redactText(entry && entry.label, 120),
+        color: entry && typeof entry.color === 'string' ? entry.color.trim().slice(0, 32) || null : null,
+    })).filter(entry => entry.id && entry.label);
+    return { brands: project(wrapper.brands), channels: project(wrapper.channels) };
+}
+
+function directoryIdSet(domain, key) {
+    const wrapper = domain && isPlainObject(domain.dimensions) ? domain.dimensions : null;
+    if (!wrapper || !Array.isArray(wrapper[key])) return null;
+    return new Set((wrapper[key]).map(entry => String(entry && entry.id || '').trim().toLowerCase()).filter(Boolean));
+}
+
+function directoryRef(value, field, domain, key) {
+    if (value == null) return null;
+    if (typeof value !== 'string' || !isUUID(value.trim())) {
+        throw actionError('INVALID_ARGS', field + ' must be a ' + key.slice(0, -1) + ' UUID or null');
+    }
+    const id = value.trim().toLowerCase();
+    const known = directoryIdSet(domain, key);
+    if (known && !known.has(id)) {
+        throw actionError('INVALID_ARGS', field + ' must reference an existing ' + key + ' entry or null');
+    }
+    return id;
+}
+
 function projectDisplay(asset, tags, locale) {
     const tagById = new Map(safeTagCatalog(tags).map(tag => [tag.id.toLowerCase(), tag]));
     const cycle = asset.kind === FORMAL_ASSET_KIND.VIRTUAL_SUBSCRIPTION
@@ -3950,7 +4027,12 @@ function queryDetail(args, domain) {
 }
 
 function queryTags(domain, locale) {
-    return { value: safeTagCatalog(domain.tags), total: Array.isArray(domain.tags) ? domain.tags.length : 0 };
+    return {
+        value: Object.assign(safeDimensionCatalog(domain.dimensions), {
+            tags: safeTagCatalog(domain.tags),
+        }),
+        total: Array.isArray(domain.tags) ? domain.tags.length : 0,
+    };
 }
 
 function displayMaps(locale) {
@@ -4005,7 +4087,7 @@ function querySummary(domain, locale) {
     };
 }
 
-function validateCreateArgs(raw) {
+function validateCreateArgs(raw, domain) {
     const optionKeys = ['purchaseAmountMinor', 'prepaidInitialAmountMinor', 'prepaidOpeningCount', 'subscriptionPeriodEnd'];
     assertKnownKeys(raw, ['data', 'options'].concat(optionKeys), 'args');
     if (!isPlainObject(raw.data)) throw actionError('INVALID_ARGS', 'data is required and must be an object');
@@ -4046,6 +4128,18 @@ function validateCreateArgs(raw) {
     if (options.prepaidOpeningCount != null && data.kind !== FORMAL_ASSET_KIND.PREPAID_COUNT) {
         throw actionError('INVALID_ARGS', 'prepaidOpeningCount is only accepted for prepaidCount');
     }
+    if (data.brandId != null) {
+        const knownBrands = directoryIdSet(domain, 'brands');
+        if (knownBrands && !knownBrands.has(data.brandId)) {
+            throw actionError('INVALID_ARGS', 'data.brandId must reference an existing brands entry');
+        }
+    }
+    if (data.channelId != null) {
+        const knownChannels = directoryIdSet(domain, 'channels');
+        if (knownChannels && !knownChannels.has(data.channelId)) {
+            throw actionError('INVALID_ARGS', 'data.channelId must reference an existing channels entry');
+        }
+    }
     return { data: data, options: Object.assign({}, options) };
 }
 
@@ -4055,7 +4149,7 @@ function validateUpdateArgs(raw, domain) {
     const current = domain.assets.find(asset => asset && asset.id === id);
     if (!current) throw actionError('ASSET_NOT_FOUND', 'assetId was not found');
     if (!isPlainObject(raw.patch)) throw actionError('INVALID_ARGS', 'patch is required and must be an object');
-    assertKnownKeys(raw.patch, ['name', 'category', 'categoryId', 'tagIds', 'notes', 'acquiredOn', 'details'], 'patch');
+    assertKnownKeys(raw.patch, ['name', 'category', 'categoryId', 'tagIds', 'notes', 'acquiredOn', 'details', 'brandId', 'channelId'], 'patch');
     const patch = Object.assign({}, raw.patch);
     if (hasOwn(patch, 'name')) optionalString(patch.name, 'patch.name', 200);
     if (hasOwn(patch, 'category') && hasOwn(patch, 'categoryId')) throw actionError('INVALID_ARGS', 'use either category or categoryId, not both');
@@ -4071,14 +4165,16 @@ function validateUpdateArgs(raw, domain) {
         optionalBusinessDate(patch.acquiredOn, 'patch.acquiredOn');
     }
     if (hasOwn(patch, 'tagIds')) {
-        if (!Array.isArray(patch.tagIds) || patch.tagIds.length > 3 || patch.tagIds.some(idValue => typeof idValue !== 'string' || !isUUID(idValue.toLowerCase()))) {
-            throw actionError('INVALID_ARGS', 'patch.tagIds must contain at most 3 UUIDs');
+        if (!Array.isArray(patch.tagIds) || patch.tagIds.length > 32 || patch.tagIds.some(idValue => typeof idValue !== 'string' || !isUUID(idValue.toLowerCase()))) {
+            throw actionError('INVALID_ARGS', 'patch.tagIds must contain at most 32 UUIDs');
         }
         const tagIds = new Set((Array.isArray(domain.tags) ? domain.tags : []).map(tag => String(tag && tag.id || '').toLowerCase()));
         if (patch.tagIds.some(idValue => !tagIds.has(String(idValue).trim().toLowerCase()))) {
             throw actionError('TAG_CREATE_REQUIRED', 'patch.tagIds must refer to existing tags');
         }
     }
+    if (hasOwn(patch, 'brandId')) patch.brandId = directoryRef(patch.brandId, 'patch.brandId', domain, 'brands');
+    if (hasOwn(patch, 'channelId')) patch.channelId = directoryRef(patch.channelId, 'patch.channelId', domain, 'channels');
     if (hasOwn(patch, 'notes')) optionalString(patch.notes, 'patch.notes', 5000);
     if (hasOwn(patch, 'details')) {
         if (!isPlainObject(patch.details)) throw actionError('INVALID_ARGS', 'patch.details must be an object');
@@ -4300,7 +4396,7 @@ function createAgentActionHandlers(options) {
     });
     const create = wrap('asset_create', 'aiAllowCreate', async raw => {
         const domain = await requireDomain(getDomain);
-        const args = validateCreateArgs(raw);
+        const args = validateCreateArgs(raw, domain);
         const asset = await call('addAsset', [args.data, args.options]);
         return writeResult('asset_create', projectSafeAsset(asset, Object.assign({}, domain, { assets: domain.assets.concat(asset) })));
     });
@@ -4408,15 +4504,15 @@ function createAgentActionHandlers(options) {
 }
 
 const AGENT_ACTION_DESCRIPTIONS = Object.freeze({
-    asset_query: 'Call with JSON args {"action":"query","op":"count|search|detail|summary|tags","locale":"zh_CN|zh-CN|en_US|en-US"}. For "how many and what are they", call search once: it returns the page plus meta.total, so do not call count first or request detail for every row unless the user asks. count accepts status/kind/categoryId (digital/appliance/home/otherPhysical/member/software/service/domain/ai/otherVirtual/prepaidAmount/prepaidCount, matching the asset kind)/tag/tagId/currency filters and returns complete aggregates. search accepts the same filters plus search, offset, pageSize (default 50, max 200), and returns raw machine fields plus localized display labels and tag labels. tags returns a safe tag directory. detail requires exact assetId and optional includeNotes. summary takes only action and op. Query first, then use the explicit assetId for every write; names are never identifiers.',
-    asset_create: 'Call with JSON args {"action":"create","data":<formal-v2 asset object>,"purchaseAmountMinor":<optional integer>,...}. Never put priceMinor or any price field inside data. Opening fields are top-level: purchaseAmountMinor (for CNY 99.00 use 9900), prepaidInitialAmountMinor, prepaidOpeningCount, subscriptionPeriodEnd. data accepts name, kind, currency, categoryId, tagIds (existing tag UUIDs, max 3; prefer tag tools by label), notes, acquiredOn (YYYY-MM-DD start date anchoring the first subscription period; defaults to today; pair with top-level subscriptionPeriodEnd for an exact first period), and details by kind: physical {warrantyEndsOn, costGoal{targetDailyAmountMinor, targetEndsOn}}; virtualSubscription {planName, accountLabel, billingPlan{cycle: monthly|quarterly|halfYearly|yearly}, autoRenew}; virtualPerpetual {licenseAccountLabel}; prepaidAmount/prepaidCount {provider, expiresOn}. categoryId must match kind: digital/appliance/home/otherPhysical (physical), member/software/service/domain/ai/otherVirtual (virtual), prepaidAmount/prepaidCount (prepaid). For a wishlist item use data.status="wishlist" with data.wishlist {expectedAmountMinor, reason, targetGroup: physical|virtual|prepaid, heartbeatTarget 1-999}; wishlist mode accepts no categoryId/tagIds/notes/details or opening fields. Query first when choosing an existing asset; writes always use explicit IDs.',
-    asset_update: 'Call with JSON args {"action":"update","assetId":"<exact lowercase UUID>","patch":<limited patch>}. patch allows name, acquiredOn for owned non-subscriptions, categoryId or an exact category label, tagIds (existing tag UUIDs, max 3), notes, and restricted details by kind: physical {warrantyEndsOn, costGoal{targetDailyAmountMinor, targetEndsOn}}; virtualSubscription {planName, billingPlan{cycle}}; prepaidAmount/prepaidCount {provider, expiresOn}; virtualPerpetual has no agent-editable details. Subscription acquiredOn must use asset_lifecycle op=updateStartDate. It cannot change kind, status, currency, IDs, index links, related notes, cover paths, accounts, or credentials. For tag labels use asset_tag_update or asset_tag_create. For price correction use asset_price_update first. Query first and never guess a duplicate name.',
+    asset_query: 'Call with JSON args {"action":"query","op":"count|search|detail|summary|tags","locale":"zh_CN|zh-CN|en_US|en-US"}. For "how many and what are they", call search once: it returns the page plus meta.total, so do not call count first or request detail for every row unless the user asks. count accepts status/kind/categoryId (digital/appliance/home/otherPhysical/member/software/service/domain/ai/otherVirtual/prepaidAmount/prepaidCount, matching the asset kind)/tag/tagId/currency filters and returns complete aggregates. search accepts the same filters plus search, offset, pageSize (default 50, max 200), and returns raw machine fields plus localized display labels and tag labels. tags returns a safe directory: tags plus the brand and channel catalogs (id/label[/color]) used by asset brandId/channelId fields. detail requires exact assetId and optional includeNotes. summary takes only action and op. Query first, then use the explicit assetId for every write; names are never identifiers.',
+    asset_create: 'Call with JSON args {"action":"create","data":<formal-v2 asset object>,"purchaseAmountMinor":<optional integer>,...}. Never put priceMinor or any price field inside data. Opening fields are top-level: purchaseAmountMinor (for CNY 99.00 use 9900), prepaidInitialAmountMinor, prepaidOpeningCount, subscriptionPeriodEnd. data accepts name, kind, currency, categoryId, tagIds (existing tag UUIDs, max 32; prefer tag tools by label), brandId / channelId (existing brand or channel UUIDs from the tags directory query, or null to leave unset; owned assets only), notes, acquiredOn (YYYY-MM-DD start date anchoring the first subscription period; defaults to today; pair with top-level subscriptionPeriodEnd for an exact first period), and details by kind: physical {warrantyEndsOn, costGoal{targetDailyAmountMinor, targetEndsOn}}; virtualSubscription {planName, accountLabel, billingPlan{cycle: monthly|quarterly|halfYearly|yearly}, autoRenew}; virtualPerpetual {licenseAccountLabel}; prepaidAmount/prepaidCount {provider, expiresOn}. categoryId must match kind: digital/appliance/home/otherPhysical (physical), member/software/service/domain/ai/otherVirtual (virtual), prepaidAmount/prepaidCount (prepaid). For a wishlist item use data.status="wishlist" with data.wishlist {expectedAmountMinor, reason, targetGroup: physical|virtual|prepaid, heartbeatTarget 1-999}; wishlist mode accepts no categoryId/tagIds/brandId/channelId/notes/details or opening fields. Query first when choosing an existing asset; writes always use explicit IDs.',
+    asset_update: 'Call with JSON args {"action":"update","assetId":"<exact lowercase UUID>","patch":<limited patch>}. patch allows name, acquiredOn for owned non-subscriptions, categoryId or an exact category label, tagIds (existing tag UUIDs, max 32), brandId / channelId (existing brand or channel UUIDs from the tags directory query, or null to clear), notes, and restricted details by kind: physical {warrantyEndsOn, costGoal{targetDailyAmountMinor, targetEndsOn}}; virtualSubscription {planName, billingPlan{cycle}}; prepaidAmount/prepaidCount {provider, expiresOn}; virtualPerpetual has no agent-editable details. Subscription acquiredOn must use asset_lifecycle op=updateStartDate. It cannot change kind, status, currency, IDs, index links, related notes, cover paths, accounts, or credentials. For tag labels use asset_tag_update or asset_tag_create. For price correction use asset_price_update first. Query first and never guess a duplicate name.',
     asset_lifecycle: 'Call with JSON args {"action":"update","op":"setStatus|retire|sale|renewSubscription|toggleAutoRenew|updateStartDate|updatePeriodEnd","assetId":"<exact lowercase UUID>",...}. setStatus requires status; retire accepts retiredDate/note; sale requires positive priceMinor and accepts soldOn/note; renewSubscription requires amountMinor and accepts startDate/endDate/cycle; toggleAutoRenew requires boolean enabled; updateStartDate changes a subscription start date (required startDate; optional endDate re-anchors the first period end); updatePeriodEnd changes the latest subscription period end date (required endDate). sale and renewSubscription also require records permission. Query first and use an explicit assetId.',
     asset_record: 'Call with JSON args {"action":"create|update","op":"purchaseAmount|subscriptionPaymentAmount|maintenance|prepaidTransaction|prepaidAdjust|prepaidConsumption","assetId":"<exact lowercase UUID>",...}. For price correction use action=update: purchaseAmount handles physical/virtualPerpetual/prepaid assets with non-negative amountMinor; subscriptionPaymentAmount handles the latest subscription payment with positive amountMinor (>0), so CNY 20.00 is 2000. Price correction uses formal replacement audit, never maintenance, renewSubscription, or a difference event. For maintenance/prepaidTransaction/prepaidAdjust/prepaidConsumption use action=create. maintenance requires type repair|maintain and non-negative amountMinor/date/note; prepaidTransaction requires a kind-specific type (amount kind: inflow|outflow|adjust|refund; count kind: inflow|outflow|adjust) and non-negative amountMinor or count; paymentAmountMinor is only accepted for count inflow; prepaidAdjust requires targetCount; prepaidConsumption requires positive count. Dates are YYYY-MM-DD and amounts are safe integer minor units. Query first and use an explicit assetId.',
     asset_price_update: 'Use this dedicated tool first for any price correction. Call with JSON args {"action":"update","assetId":"<exact lowercase UUID>","amountMinor":<integer>}. It automatically routes physical/virtualPerpetual/prepaid to the purchase event and virtualSubscription to the latest subscription payment. CNY 20.00 is 2000. It performs a formal void-and-replace correction, keeps one active financial event, does not create a maintenance difference or a new subscription period, and requires the records permission. Query first and use an explicit assetId; do not use asset_update.patch, maintenance, or renewSubscription for price correction.',
     asset_delete: 'Call with JSON args {"action":"delete","assetId":"<exact lowercase UUID>"}. This permanently deletes the asset and its formal sidecar records through the plugin transaction. Query first, require an explicit assetId, and never infer an ID from a name.',
-    asset_tag_update: 'Call with JSON args {"action":"update","assetId":"<exact lowercase UUID>","labels":["Exact tag label"],"mode":"add|remove|replace"}. Labels are trimmed and matched case-insensitively by exact label only; fuzzy guesses are rejected. mode defaults to add, and replace runs only when explicitly supplied. Existing tags only; requires modify permission. An asset may have at most three tags.',
-    asset_tag_create: 'Call with JSON args {"action":"create","assetId":"<exact lowercase UUID>","labels":["Tag label"],"mode":"add|replace"}. Missing labels are created and bound in one formal transaction; concurrent requests reuse an existing exact-match tag instead of creating an orphan. Requires both create and modify permissions plus Agent write confirmation. Labels are trimmed, case-insensitive exact matches, and an asset may have at most three tags.',
+    asset_tag_update: 'Call with JSON args {"action":"update","assetId":"<exact lowercase UUID>","labels":["Exact tag label"],"mode":"add|remove|replace"}. Labels are trimmed and matched case-insensitively by exact label only; fuzzy guesses are rejected. mode defaults to add, and replace runs only when explicitly supplied. Existing tags only; requires modify permission. An asset may have at most 32 tags.',
+    asset_tag_create: 'Call with JSON args {"action":"create","assetId":"<exact lowercase UUID>","labels":["Tag label"],"mode":"add|replace"}. Missing labels are created and bound in one formal transaction; concurrent requests reuse an existing exact-match tag instead of creating an orphan. Requires both create and modify permissions plus Agent write confirmation. Labels are trimmed, case-insensitive exact matches, and an asset may have at most 32 tags.',
 });
 
     return {AGENT_SCHEMA,
@@ -4455,6 +4551,7 @@ const { createStableId } = __am_algos;
         assets: 'assets.json',
         settings: 'settings.json',
         tags: 'tags.json',
+        dimensions: 'dimensions.json',
         maintenance: 'maintenance.json',
         usage: 'usage.json',
         operationLogs: 'operationLogs.json',
@@ -4627,6 +4724,21 @@ const { createStableId } = __am_algos;
         return wrapper[envelopeKey];
     }
 
+    // v2.6.5 阶段4：dimensions.json 双目录（brands/channels）宽松读。整文件缺失
+    // → 空目录（旧快照容忍，与前端 readStrictFormalDimensions 缺文件语义一致）；
+    // 形状异常 → fail-closed（DOMAIN_UNAVAILABLE），条目级过滤交给
+    // agent-actions.safeDimensionCatalog 的脱敏投影。
+    async function readDimensionsWrapper() {
+        var record = await readJsonState(KERNEL_STORAGE_FILES.dimensions);
+        if (record.status === 'missing') return { brands: [], channels: [] };
+        if (record.status !== 'valid') throw domainUnavailableError(record.error);
+        var wrapper = record.value;
+        if (!wrapper || typeof wrapper !== 'object' || !Array.isArray(wrapper.brands) || !Array.isArray(wrapper.channels)) {
+            throw domainUnavailableError(new Error('unexpected storage shape: ' + KERNEL_STORAGE_FILES.dimensions));
+        }
+        return { brands: wrapper.brands, channels: wrapper.channels };
+    }
+
     async function readAgentDomain() {
         var domain = {};
         domain.assets = await readWrapperArray(KERNEL_STORAGE_FILES.assets, 'assets', true);
@@ -4635,6 +4747,7 @@ const { createStableId } = __am_algos;
         await Promise.all(DOMAIN_RECORD_FILES.map(async function (entry) {
             domain[entry[0]] = await readWrapperArray(entry[1], entry[2]);
         }));
+        domain.dimensions = await readDimensionsWrapper();
         if (!agentActions.completeDomain(domain)) throw domainUnavailableError(new Error('domain incomplete'));
         return domain;
     }
@@ -4664,6 +4777,10 @@ const { createStableId } = __am_algos;
             wishlistEvents: [],
             operationLogs: [],
         };
+        // v2.6.5 阶段4：tags op 现同时返回品牌 / 途径目录，需要读 dimensions.json。
+        domain.dimensions = op === 'tags'
+            ? await readDimensionsWrapper()
+            : { brands: [], channels: [] };
         if (!agentActions.completeDomain(domain)) throw domainUnavailableError(new Error('query domain incomplete'));
         return domain;
     }
@@ -5083,7 +5200,7 @@ const { createStableId } = __am_algos;
                     type: 'object',
                     properties: {
                         action: actionSchema('query'),
-                        op: stringEnumSchema(['count', 'search', 'detail', 'summary', 'tags'], 'Query operation'),
+                        op: stringEnumSchema(['count', 'search', 'detail', 'summary', 'tags'], 'Query operation (tags also returns brand/channel catalogs)'),
                         locale: stringEnumSchema(['zh_CN', 'zh-CN', 'en_US', 'en-US'], 'Display locale (default zh_CN)'),
                         assetId: stringSchema('Exact lowercase asset UUID (detail only)'),
                         search: stringSchema('Name substring filter'),

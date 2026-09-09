@@ -366,6 +366,11 @@ function buildFormalReport(snapshot, filterInput, options) {
         assets: cards,
         counts: { total: cards.length, byKind: createDict(), byStatus: createDict() },
         tags: { uniqueCount: 0, byTagId: createDict() },
+        // v2.6.5 阶段3a：品牌 / 途径维度聚合（与 tags.byTagId 同构）。金额聚合不进
+        // 报表契约——UI 层折 CNY；未设置 brandId/channelId 的资产不进聚合（UI 单独
+        // 归「未设置」桶）。
+        brand: { uniqueCount: 0, byId: createDict() },
+        channel: { uniqueCount: 0, byId: createDict() },
         amounts: {
             acquisitionByCurrency: createDict(),
             // 口径（v2.6.2）：净额与日均只累计在役（active）资产；退役资产不计入
@@ -426,6 +431,14 @@ function buildFormalReport(snapshot, filterInput, options) {
     report.wishlist.purchaseRate = wishlistIds.size ? purchasedIds.size / wishlistIds.size : 0;
     report.wishlist.abandonRate = wishlistIds.size ? abandonedIds.size / wishlistIds.size : 0;
 
+    // v2.6.5 阶段3a：投影卡不携带 brandId/channelId（投影契约保持不变），经资产 id
+    // 回查原始归一化资产取维度外键。selected 与 cards 由同一次 map 产出，严格同序同长。
+    const dimensionRefsByAssetId = createDict();
+    selected.forEach(asset => {
+        if (asset.brandId == null && asset.channelId == null) return;
+        dimensionRefsByAssetId[asset.id] = { brandId: asset.brandId, channelId: asset.channelId };
+    });
+
     cards.forEach(card => {
         incrementFormalGroup(report.counts.byKind, card.kind, 'counts.byKind');
         incrementFormalGroup(report.counts.byStatus, card.status, 'counts.byStatus');
@@ -434,6 +447,18 @@ function buildFormalReport(snapshot, filterInput, options) {
             report.tags.byTagId[tagId].count = safeAddFormal(report.tags.byTagId[tagId].count, 1, 'tags.count');
             report.tags.byTagId[tagId].assetIds.push(card.id);
         });
+        // v2.6.5 阶段3a：品牌 / 途径维度计数 + 资产 id 归档（口径与 tags.byTagId 一致）。
+        const dimensionRefs = dimensionRefsByAssetId[card.id];
+        if (dimensionRefs) {
+            ['brandId', 'channelId'].forEach(refKey => {
+                const refValue = dimensionRefs[refKey];
+                if (refValue == null) return;
+                const group = refKey === 'brandId' ? report.brand.byId : report.channel.byId;
+                if (!hasOwn(group, refValue)) group[refValue] = { count: 0, assetIds: [] };
+                group[refValue].count = safeAddFormal(group[refValue].count, 1, refKey + '.count');
+                group[refValue].assetIds.push(card.id);
+            });
+        }
         incrementFormalMinorBucket(report.amounts.acquisitionByCurrency, card.currency, 'amountMinor', card.acquisition.amountMinor, 'assetCount');
         // 口径（v2.6.2）：净额/日均只在役——退役资产不参与总金额与日均聚合。
         if (card.status === ASSET_STATUS.ACTIVE) {
@@ -685,6 +710,9 @@ function buildFormalReport(snapshot, filterInput, options) {
             report.dataCoverage.lifecycleEvents.selected, 1, 'lifecycleEvents.selected');
     });
     report.tags.uniqueCount = Object.keys(report.tags.byTagId).length;
+    // v2.6.5 阶段3a：维度去重计数（与 tags.uniqueCount 同口径 = 引用中的去重条目数）。
+    report.brand.uniqueCount = Object.keys(report.brand.byId).length;
+    report.channel.uniqueCount = Object.keys(report.channel.byId).length;
     Object.keys(report.rankings.byCurrency).forEach(currency => report.rankings.byCurrency[currency].sort((left, right) => {
         if (left.netAmountMinor === right.netAmountMinor) return left.name.localeCompare(right.name);
         return left.netAmountMinor < right.netAmountMinor ? 1 : -1;

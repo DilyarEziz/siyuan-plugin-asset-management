@@ -14,8 +14,8 @@ const PREPAID_ID = '33333333-3333-4333-8333-333333333333';
 const TAG_WORK_ID = '66666666-6666-4666-8666-666666666666';
 const TAG_HOME_ID = '77777777-7777-4777-8777-777777777777';
 
-function completeDomain(assets, tags) {
-    return {
+function completeDomain(assets, tags, dimensions) {
+    const domain = {
         assets: assets || [],
         tags: tags || [],
         financialEvents: [],
@@ -27,6 +27,8 @@ function completeDomain(assets, tags) {
         wishlistEvents: [],
         operationLogs: [],
     };
+    if (dimensions) domain.dimensions = dimensions;
+    return domain;
 }
 
 function allPermissions(patch) {
@@ -518,7 +520,12 @@ async function testAgentFieldRoutingAndLocalization() {
     const subscription = asset(SUBSCRIPTION_ID, 'virtualSubscription', 'Cloud');
     const tag = { id: TAG_WORK_ID, label: 'Work', createdAt: '2026-08-18T00:00:00.000Z' };
     physical.tagIds = [tag.id];
-    const domain = completeDomain([physical, subscription], [tag]);
+    const BRAND_ID = '88888888-8888-4888-8888-888888888888';
+    const CHANNEL_ID = '99999999-9999-4999-8999-999999999999';
+    const domain = completeDomain([physical, subscription], [tag], {
+        brands: [{ id: BRAND_ID, label: 'Acme', color: '#ff0000' }],
+        channels: [{ id: CHANNEL_ID, label: 'Official Store' }],
+    });
     const calls = [];
     const handlers = agentActions.createAgentActionHandlers({
         getSettings: () => allPermissions(),
@@ -574,6 +581,21 @@ async function testAgentFieldRoutingAndLocalization() {
     });
     assert.equal((await invoke(lifecycleDenied.asset_lifecycle, { op: 'updateStartDate', assetId: SUBSCRIPTION_ID, startDate: '2026-08-01' })).body.error.code, 'PERMISSION_DENIED');
 
+    // v2.6.5 阶段4：brandId / channelId patch 必须命中品牌 / 途径目录。
+    const brandPatch = await invoke(handlers.asset_update, { assetId: PHYSICAL_ID, patch: { brandId: BRAND_ID } });
+    assert.equal(brandPatch.body.ok, true);
+    assert.equal(calls[5][2].brandId, BRAND_ID, 'known brand UUID passes through to updateAsset');
+    const clearBrand = await invoke(handlers.asset_update, { assetId: PHYSICAL_ID, patch: { brandId: null } });
+    assert.equal(clearBrand.body.ok, true);
+    assert.equal(calls[6][2].brandId, null, 'null clears the brand reference');
+    const channelPatch = await invoke(handlers.asset_update, { assetId: PHYSICAL_ID, patch: { channelId: CHANNEL_ID } });
+    assert.equal(channelPatch.body.ok, true);
+    assert.equal(calls[7][2].channelId, CHANNEL_ID);
+    const unknownBrand = await invoke(handlers.asset_update, { assetId: PHYSICAL_ID, patch: { brandId: TAG_WORK_ID } });
+    assert.equal(unknownBrand.body.error.code, 'INVALID_ARGS', 'a UUID outside the brand catalog is rejected');
+    const malformedBrand = await invoke(handlers.asset_update, { assetId: PHYSICAL_ID, patch: { channelId: 'not-a-uuid' } });
+    assert.equal(malformedBrand.body.error.code, 'INVALID_ARGS');
+
     const zh = await invoke(handlers.asset_query, { locale: 'zh_CN', op: 'detail', assetId: PHYSICAL_ID });
     assert.equal(zh.body.data.kind, 'physical');
     assert.equal(zh.body.data.display.locale, 'zh-CN');
@@ -585,7 +607,11 @@ async function testAgentFieldRoutingAndLocalization() {
     assert.equal(en.body.data[0].display.locale, 'en-US');
     assert.equal(en.body.data[0].display.kindLabel, 'Physical asset');
     const tags = await invoke(handlers.asset_query, { locale: 'en-US', op: 'tags' });
-    assert.deepEqual(tags.body.data, [{ id: TAG_WORK_ID, label: 'Work' }]);
+    assert.deepEqual(tags.body.data.tags, [{ id: TAG_WORK_ID, label: 'Work' }]);
+    assert.deepEqual(tags.body.data.brands, [{ id: BRAND_ID, label: 'Acme', color: '#ff0000' }],
+        'tags op also returns the brand catalog');
+    assert.deepEqual(tags.body.data.channels, [{ id: CHANNEL_ID, label: 'Official Store', color: null }],
+        'tags op also returns the channel catalog');
     const defaultLocale = await invoke(handlers.asset_query, { op: 'detail', assetId: PHYSICAL_ID });
     assert.equal(defaultLocale.body.data.display.locale, 'zh-CN');
 }
@@ -635,12 +661,14 @@ async function testAgentTagSemantics() {
     assert.equal(durableTags.length, 1, 'concurrent tag creation reuses one exact-match tag');
     assert.deepEqual(h.state['assets.json'].assets[0].tagIds, [durableTags[0].id]);
     assert.ok(created[0].tags || created[1].tags, 'create+bind returns the committed tag catalog');
+    const overflowLabels = Array.from({ length: 33 }, (_, index) => 'Overflow ' + (index + 1));
     await assert.rejects(
-        () => h.plugin.createAndBindAssetTags(PHYSICAL_ID, { labels: ['A', 'B', 'C', 'D'] }),
+        () => h.plugin.createAndBindAssetTags(PHYSICAL_ID, { labels: overflowLabels }),
         error => error && error.agentCode === 'TAG_LIMIT_EXCEEDED',
-        'tag creation must enforce the three-tag limit in the formal transaction'
+        'tag creation must enforce the 32-tag limit in the formal transaction'
     );
-    assert.equal(h.state['tags.json'].tags.filter(item => ['a', 'b', 'c', 'd'].includes(item.label.toLowerCase())).length, 0);
+    assert.equal(h.state['tags.json'].tags.filter(item => overflowLabels.includes(item.label)).length, 0,
+        'rejected bind must not leave created tags behind');
 }
 
 async function testFrontendWriteQueueGate() {

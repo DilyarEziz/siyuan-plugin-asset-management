@@ -51,8 +51,24 @@ function tagLabelMap(tags) {
     return new Map((Array.isArray(tags) ? tags : []).map(tag => [tag && tag.id, String(tag && tag.label || '').trim()]));
 }
 
-function buildFormalResourceSummaries(assets, tags) {
+// v2.6.5 阶段4：品牌 / 途径目录标签反查。brand 与 channel 的 id 共享同一唯一
+// 命名空间（见 storage.js 目录约定），因此合并成一张表即可覆盖两类外键。
+function dimensionLabelMap(dimensions) {
+    const wrapper = dimensions && typeof dimensions === 'object' ? dimensions : {};
+    const entries = (Array.isArray(wrapper.brands) ? wrapper.brands : [])
+        .concat(Array.isArray(wrapper.channels) ? wrapper.channels : []);
+    return new Map(entries.map(entry => [entry && entry.id, String(entry && entry.label || '').trim()]));
+}
+
+function directoryRefLabel(map, id) {
+    if (id == null) return null;
+    const key = String(id);
+    return map.get(key) || ('[missing:' + key.slice(0, 8) + ']');
+}
+
+function buildFormalResourceSummaries(assets, tags, dimensions) {
     const labels = tagLabelMap(tags);
+    const directoryLabels = dimensionLabelMap(dimensions);
     return (Array.isArray(assets) ? assets : []).map(asset => ({
         id: String(asset && asset.id || ''),
         kind: String(asset && asset.kind || ''),
@@ -61,12 +77,15 @@ function buildFormalResourceSummaries(assets, tags) {
         acquiredOn: asset && asset.status !== 'wishlist' ? String(asset.acquiredOn || '') : '',
         cover: asset && asset.cover,
         tagLabels: (Array.isArray(asset && asset.tagIds) ? asset.tagIds : []).map(id => labels.get(id) || ('[missing:' + String(id).slice(0, 8) + ']')),
+        // 品牌与入手途径标签：未设置输出 null，悬挂引用输出 '[missing:…]'。
+        brandLabel: asset && asset.brandId != null ? directoryRefLabel(directoryLabels, asset.brandId) : null,
+        channelLabel: asset && asset.channelId != null ? directoryRefLabel(directoryLabels, asset.channelId) : null,
     }));
 }
 
-function collectCoverReferences(assets, tags) {
+function collectCoverReferences(assets, tags, dimensions) {
     const seen = new Set();
-    return buildFormalResourceSummaries(assets, tags).reduce((result, asset) => {
+    return buildFormalResourceSummaries(assets, tags, dimensions).reduce((result, asset) => {
         const cover = asset && asset.cover;
         if (!cover || (cover.kind !== 'upload' && cover.kind !== 'workspaceAsset')) return result;
         const path = normalizeAssetPath(cover.assetPath);
@@ -102,8 +121,10 @@ function renderIndexMarkdown(references) {
     (Array.isArray(references) ? references : []).forEach(reference => {
         const path = normalizeAssetPath(reference && reference.path);
         if (!path) return;
+        const labels = (Array.isArray(reference.tagLabels) ? reference.tagLabels : [])
+            .concat(reference.brandLabel || [], reference.channelLabel || []);
         const summary = [reference.kind, reference.status, reference.acquiredOn,
-            (Array.isArray(reference.tagLabels) ? reference.tagLabels : []).join(', ')].filter(Boolean).join(' · ');
+            labels.join(', ')].filter(Boolean).join(' · ');
         lines.push('![' + escapeMarkdownText(reference.name) + '](' + encodeMarkdownHref(path) + ')' + (summary ? ' ' + escapeMarkdownText(summary) : ''));
     });
     return lines.join(' ');
@@ -303,11 +324,11 @@ async function clearPendingCleanupBlock(state, options) {
     return Object.assign(index, { pendingCleanupBlockId: null, lastError: null });
 }
 
-async function reconcileResourceIndex({ state, assets, tags, target, options }) {
+async function reconcileResourceIndex({ state, assets, tags, dimensions, target, options }) {
     let index = normalizeResourceIndex(state);
     const requested = target ? normalizeResourceIndex(target) : index;
     if (!requested.notebookId || !requested.documentId || requested.targetVerified !== true) return index;
-    const references = collectCoverReferences(assets, tags);
+    const references = collectCoverReferences(assets, tags, dimensions);
     const targetChanged = !!(target && (requested.notebookId !== index.notebookId || requested.documentId !== index.documentId));
     if (!references.length) {
         // No custom cover means there is nothing to protect. Keep any historical managed

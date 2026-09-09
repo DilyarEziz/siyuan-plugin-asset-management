@@ -82,7 +82,7 @@ async function main() {
     const state = rawState();
     const preflightStorage = storageFor(state);
     const preflight = await preflightStorage.readFormalResetPreflight();
-    assert.deepEqual(preflight.counts, { assets: 3, tags: 2, maintenance: 3, usage: 1, prepaidTransactions: 2,
+    assert.deepEqual(preflight.counts, { assets: 3, tags: 2, dimensions: 0, maintenance: 3, usage: 1, prepaidTransactions: 2,
         wishlistEvents: 1, operationLogs: 2, financialEvents: 1, lifecycleEvents: 1, subscriptionPeriods: 3, exchangeRates: 2 });
     assert.equal(preflight.total, 21);
     assert.equal(preflight.uploads, 3, 'legacy imageUrl, legacy coverPath, and formal upload covers are counted');

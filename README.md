@@ -13,6 +13,16 @@ Your personal asset keeper in SiYuan · Wishlist / Active / Retired · Daily cos
 
 ## Changelog
 
+### v2.6.5
+
+**Brands & purchase channels, upgraded filters, and report dimension analysis**
+
+- New: tag each asset with a brand (e.g. Xiaomi, Huawei) and a purchase channel (e.g. Amazon, a local store). Pick an existing entry or create your own right in the asset editor, with custom names and colors.
+- New: the home filter now offers three switchable groups — tags, brands, and purchase channels — each with multi-select, and they combine freely. For example, select "Xiaomi" AND "Amazon" to see only Xiaomi items bought there.
+- New: reports gain "Dimension analysis" — spending rankings by brand and by purchase channel. Tap an entry to view the underlying assets, and choose which rankings to show in Settings.
+- Improved: the tag limit is gone — add as many tags as you like.
+- Improved: required form fields are now marked with a red dot, so you can see at a glance what must be filled in; optional fields can be left empty.
+
 ### v2.6.4
 
 **Filter memory, subscription monthly spending fix, SiYuan 3.8.3 compatibility, and faster AI actions**
@@ -36,16 +46,5 @@ Your personal asset keeper in SiYuan · Wishlist / Active / Retired · Daily cos
 - New: the exchange-rate area shows the current rates, their source (automatic update or manual setting), and the last refresh time, together with a "Refresh now" button.
 - New: manual rate adjustments cover the US dollar, euro, and British pound; after a manual adjustment, automatic updates will not overwrite it — use "Restore automatic rates" to switch back at any time.
 - Fixed: the 5 preset icons in the "Service" category of the icon picker were not showing; they now display correctly.
-
-### v2.6.2
-
-**Active-only totals, inline recovered amount, and retirement dates in the note index**
-
-- Improved: the home summary now counts only assets in service — the total value and daily average cost no longer include retired items, and when there is resale income, a `Recovered:` amount is shown inline right beside the total value.
-- Improved: in the report's asset overview, both the total value and retired recovery are compressed into single lines, each with an asset count.
-- New: in the note index document, retired asset entries show their retirement date, aligned with the expiry-date column of active assets.
-- Fixed: when a new asset was set to retired right at creation, its sale price was silently discarded; it is now recorded correctly as recovery income.
-- Fixed: when editing a retired asset, the sale price is now filled in automatically, and changing it is saved as a new recovery record.
-- Improved: asset list cards drop the extra padding above and below, so the list's top and bottom edges are no longer too wide.
 
 > For the full changelog, see [CHANGELOG.md](./CHANGELOG.md).

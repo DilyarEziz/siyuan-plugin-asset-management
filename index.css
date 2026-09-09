@@ -13248,6 +13248,18 @@
 .am-fpc1-row__label { flex: 0 0 auto; font-size: 15px; font-weight: 600; color: var(--b3-theme-on-background); }
 .am-fpc1-row__value { flex: 1 1 auto; min-width: 0; min-height: 32px; border: 0; background: transparent; color: var(--b3-theme-on-background); font-size: 16px; text-align: right; outline: none; }
 .am-fpc1-row__value::placeholder { color: color-mix(in srgb, var(--b3-theme-on-background) 38%, transparent); }
+/* 阶段 2b：必填项视觉标识 —— label 尾部 4px 小红点，纯视觉不参与校验。
+   颜色取思源主题错误色（亮暗主题各自定义），fallback 保证无变量环境也可读；
+   margin-bottom 轻微抬升使圆点视觉居中于 15px label 文本基线。 */
+.am-required-dot {
+    display: inline-block;
+    width: 4px;
+    height: 4px;
+    margin: 0 0 2px 4px;
+    border-radius: 50%;
+    background: var(--b3-theme-error, #d23f31);
+    vertical-align: baseline;
+}
 /* 阶段3（预付专项）：初始/剩余 input 包在 span.am-fpc1-row__value 内，撑满容器宽度，右对齐质感与日期行一致 */
 .am-fpc1-row__value > input.am-fpc1-row__value { width: 100%; }
 .am-fpc1-row__value--date { color: color-mix(in srgb, var(--b3-theme-on-background) 72%, transparent); }

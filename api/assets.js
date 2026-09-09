@@ -521,6 +521,8 @@ const FORMAL_V2_OWNED_KEYS = Object.freeze([
     'createdAt', 'updatedAt', 'details',
     // v2.5.0 笔记双链阶段1：可选笔记双链字段（仅 owned；wishlist 极简 schema 不变）。
     'indexBlockId', 'relatedNotes',
+    // v2.6.5 目录阶段1a：品牌/渠道可选外键（仅 owned；wishlist 极简 schema 不变）。
+    'brandId', 'channelId',
 ]);
 const FORMAL_V2_WISHLIST_KEYS = Object.freeze([
     'id', 'kind', 'name', 'status', 'currency', 'cover',
@@ -599,8 +601,19 @@ function normalizeFormalTagIds(value) {
         }
         return result;
     }, []);
-    if (normalized.length > 3) throw formalError('tagIds must contain at most 3 tags');
+    if (normalized.length > 32) throw formalError('tagIds must contain at most 32 tags');
     return normalized;
+}
+
+// v2.6.5 目录阶段1a：品牌/渠道外键归一。null/undefined → null；合法 UUID
+// trim + 小写化返回；其余 fail-closed（与 normalizeFormalTagIds 同风格）。
+// path 用于错误定位（'brandId' / 'channelId'）。
+function normalizeFormalDirectoryRef(value, path) {
+    if (value == null) return null;
+    if (typeof value !== 'string' || !isUUID(value.trim())) {
+        throw formalError(path + ' must be a UUID or null');
+    }
+    return value.trim().toLowerCase();
 }
 
 function normalizeFormalCategoryId(kind, value) {
@@ -829,6 +842,10 @@ function normalizeFormalV2Asset(value, options) {
     return Object.assign({}, baseFields, {
         categoryId: normalizeFormalCategoryId(kind, source.categoryId),
         tagIds: normalizeFormalTagIds(source.tagIds),
+        // v2.6.5 目录阶段1a：品牌/渠道外键，缺省 null（存量缺键读取容忍见
+        // validateFormalV2Asset 的 v2.6.5 块）。
+        brandId: normalizeFormalDirectoryRef(source.brandId, 'brandId'),
+        channelId: normalizeFormalDirectoryRef(source.channelId, 'channelId'),
         notes: formalString(source.notes, '', 5000, false, 'notes'),
         acquiredOn: formalDate(source.acquiredOn, opts.today || now, false, 'acquiredOn', formalHasOwn(source, 'acquiredOn')),
         statusChangedOn: formalDate(source.statusChangedOn, opts.today || now, false, 'statusChangedOn', formalHasOwn(source, 'statusChangedOn')),
@@ -869,6 +886,16 @@ function validateFormalV2Asset(value) {
             if (!Object.prototype.hasOwnProperty.call(expected, 'indexBlockId')) expected.indexBlockId = null;
             if (!Object.prototype.hasOwnProperty.call(expected, 'relatedNotes')) expected.relatedNotes = [];
         }
+        // v2.6.5 目录阶段1a 读取容忍：≤2.6.4 写入的存量 owned 资产没有
+        // brandId / channelId 键。读取时缺键等价 null；写入路径（normalize）
+        // 始终输出 canonical，未知键仍 fail-closed。
+        if (expected.status !== ASSET_STATUS.WISHLIST
+            && (!Object.prototype.hasOwnProperty.call(expected, 'brandId')
+                || !Object.prototype.hasOwnProperty.call(expected, 'channelId'))) {
+            expected = Object.assign({}, expected);
+            if (!Object.prototype.hasOwnProperty.call(expected, 'brandId')) expected.brandId = null;
+            if (!Object.prototype.hasOwnProperty.call(expected, 'channelId')) expected.channelId = null;
+        }
         const exact = formalDeepEqual(normalized, expected);
         return validationResult(exact ? [] : ['asset must already be in canonical formal-v2 form']);
     } catch (error) {
@@ -890,7 +917,7 @@ function normalizeFormalV2AssetPatch(asset, patch) {
     // （wishlist 分支不接受笔记双链字段）。
     const allowed = current.status === ASSET_STATUS.WISHLIST
         ? ['name', 'status', 'currency', 'cover', 'updatedAt', 'wishlist']
-        : ['name', 'status', 'currency', 'acquiredOn', 'statusChangedOn', 'categoryId', 'tagIds', 'cover', 'notes', 'updatedAt', 'details', 'indexBlockId', 'relatedNotes'];
+        : ['name', 'status', 'currency', 'acquiredOn', 'statusChangedOn', 'categoryId', 'tagIds', 'cover', 'notes', 'updatedAt', 'details', 'indexBlockId', 'relatedNotes', 'brandId', 'channelId'];
     assertFormalKnownKeys(source, allowed, 'patch');
     const result = Object.assign({}, source);
     if (Object.prototype.hasOwnProperty.call(source, 'details')) {
@@ -1358,6 +1385,17 @@ function applyFilter(assets, filter) {
     if (Array.isArray(filter.tagIds) && filter.tagIds.length > 0) {
         const ids = new Set(filter.tagIds.map(id => String(id).trim().toLowerCase()));
         list = list.filter(a => Array.isArray(a.tagIds) && a.tagIds.some(id => ids.has(id)));
+    }
+    // v2.6.5 目录阶段1a：brandIds / channelIds 与 tagIds 同构 — UUID 数组 OR
+    // 语义；空数组/非数组不过滤。仅 trim + lowercase，与
+    // normalizeFormalDirectoryRef 输出格式一致，不做严格校验。
+    if (Array.isArray(filter.brandIds) && filter.brandIds.length > 0) {
+        const brandIds = new Set(filter.brandIds.map(id => String(id).trim().toLowerCase()));
+        list = list.filter(a => a.brandId != null && brandIds.has(a.brandId));
+    }
+    if (Array.isArray(filter.channelIds) && filter.channelIds.length > 0) {
+        const channelIds = new Set(filter.channelIds.map(id => String(id).trim().toLowerCase()));
+        list = list.filter(a => a.channelId != null && channelIds.has(a.channelId));
     }
     return sortAssets(list, filter.sort || 'default', filter.financialEvents);
 }

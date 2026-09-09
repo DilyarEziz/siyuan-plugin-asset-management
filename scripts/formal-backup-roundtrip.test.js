@@ -49,7 +49,7 @@ async function main() {
     assert.equal(backup.schemaGeneration, 'formal-v2');
     assert.equal(backup.schemaVersion, 1);
     assert.deepEqual(Object.keys(backup.data).sort(), [
-        'assets', 'exchangeRates', 'financialEvents', 'lifecycleEvents', 'maintenance',
+        'assets', 'dimensions', 'exchangeRates', 'financialEvents', 'lifecycleEvents', 'maintenance',
         'operationLogs', 'prepaidTransactions', 'subscriptionPeriods', 'tags', 'usage', 'wishlistEvents',
     ].sort(), 'all formal domain files are represented');
     assert.equal(validateFormalImportSnapshot(backup).valid, true);

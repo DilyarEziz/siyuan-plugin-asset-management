@@ -1646,8 +1646,22 @@ function tagLabelMap(tags) {
     return new Map((Array.isArray(tags) ? tags : []).map(tag => [tag && tag.id, String(tag && tag.label || '').trim()]));
 }
 
-function buildFormalResourceSummaries(assets, tags) {
+function dimensionLabelMap(dimensions) {
+    const wrapper = dimensions && typeof dimensions === 'object' ? dimensions : {};
+    const entries = (Array.isArray(wrapper.brands) ? wrapper.brands : [])
+        .concat(Array.isArray(wrapper.channels) ? wrapper.channels : []);
+    return new Map(entries.map(entry => [entry && entry.id, String(entry && entry.label || '').trim()]));
+}
+
+function directoryRefLabel(map, id) {
+    if (id == null) return null;
+    const key = String(id);
+    return map.get(key) || ('[missing:' + key.slice(0, 8) + ']');
+}
+
+function buildFormalResourceSummaries(assets, tags, dimensions) {
     const labels = tagLabelMap(tags);
+    const directoryLabels = dimensionLabelMap(dimensions);
     return (Array.isArray(assets) ? assets : []).map(asset => ({
         id: String(asset && asset.id || ''),
         kind: String(asset && asset.kind || ''),
@@ -1656,12 +1670,14 @@ function buildFormalResourceSummaries(assets, tags) {
         acquiredOn: asset && asset.status !== 'wishlist' ? String(asset.acquiredOn || '') : '',
         cover: asset && asset.cover,
         tagLabels: (Array.isArray(asset && asset.tagIds) ? asset.tagIds : []).map(id => labels.get(id) || ('[missing:' + String(id).slice(0, 8) + ']')),
+        brandLabel: asset && asset.brandId != null ? directoryRefLabel(directoryLabels, asset.brandId) : null,
+        channelLabel: asset && asset.channelId != null ? directoryRefLabel(directoryLabels, asset.channelId) : null,
     }));
 }
 
-function collectCoverReferences(assets, tags) {
+function collectCoverReferences(assets, tags, dimensions) {
     const seen = new Set();
-    return buildFormalResourceSummaries(assets, tags).reduce((result, asset) => {
+    return buildFormalResourceSummaries(assets, tags, dimensions).reduce((result, asset) => {
         const cover = asset && asset.cover;
         if (!cover || (cover.kind !== 'upload' && cover.kind !== 'workspaceAsset')) return result;
         const path = normalizeAssetPath(cover.assetPath);
@@ -1697,8 +1713,10 @@ function renderIndexMarkdown(references) {
     (Array.isArray(references) ? references : []).forEach(reference => {
         const path = normalizeAssetPath(reference && reference.path);
         if (!path) return;
+        const labels = (Array.isArray(reference.tagLabels) ? reference.tagLabels : [])
+            .concat(reference.brandLabel || [], reference.channelLabel || []);
         const summary = [reference.kind, reference.status, reference.acquiredOn,
-            (Array.isArray(reference.tagLabels) ? reference.tagLabels : []).join(', ')].filter(Boolean).join(' · ');
+            labels.join(', ')].filter(Boolean).join(' · ');
         lines.push('![' + escapeMarkdownText(reference.name) + '](' + encodeMarkdownHref(path) + ')' + (summary ? ' ' + escapeMarkdownText(summary) : ''));
     });
     return lines.join(' ');
@@ -1893,11 +1911,11 @@ async function clearPendingCleanupBlock(state, options) {
     return Object.assign(index, { pendingCleanupBlockId: null, lastError: null });
 }
 
-async function reconcileResourceIndex({ state, assets, tags, target, options }) {
+async function reconcileResourceIndex({ state, assets, tags, dimensions, target, options }) {
     let index = normalizeResourceIndex(state);
     const requested = target ? normalizeResourceIndex(target) : index;
     if (!requested.notebookId || !requested.documentId || requested.targetVerified !== true) return index;
-    const references = collectCoverReferences(assets, tags);
+    const references = collectCoverReferences(assets, tags, dimensions);
     const targetChanged = !!(target && (requested.notebookId !== index.notebookId || requested.documentId !== index.documentId));
     if (!references.length) {
         if (targetChanged) {
@@ -2429,6 +2447,7 @@ const FORMAL_V2_OWNED_KEYS = Object.freeze([
     'acquiredOn', 'statusChangedOn', 'categoryId', 'tagIds', 'cover', 'notes',
     'createdAt', 'updatedAt', 'details',
     'indexBlockId', 'relatedNotes',
+    'brandId', 'channelId',
 ]);
 const FORMAL_V2_WISHLIST_KEYS = Object.freeze([
     'id', 'kind', 'name', 'status', 'currency', 'cover',
@@ -2507,8 +2526,16 @@ function normalizeFormalTagIds(value) {
         }
         return result;
     }, []);
-    if (normalized.length > 3) throw formalError('tagIds must contain at most 3 tags');
+    if (normalized.length > 32) throw formalError('tagIds must contain at most 32 tags');
     return normalized;
+}
+
+function normalizeFormalDirectoryRef(value, path) {
+    if (value == null) return null;
+    if (typeof value !== 'string' || !isUUID(value.trim())) {
+        throw formalError(path + ' must be a UUID or null');
+    }
+    return value.trim().toLowerCase();
 }
 
 function normalizeFormalCategoryId(kind, value) {
@@ -2708,6 +2735,8 @@ function normalizeFormalV2Asset(value, options) {
     return Object.assign({}, baseFields, {
         categoryId: normalizeFormalCategoryId(kind, source.categoryId),
         tagIds: normalizeFormalTagIds(source.tagIds),
+        brandId: normalizeFormalDirectoryRef(source.brandId, 'brandId'),
+        channelId: normalizeFormalDirectoryRef(source.channelId, 'channelId'),
         notes: formalString(source.notes, '', 5000, false, 'notes'),
         acquiredOn: formalDate(source.acquiredOn, opts.today || now, false, 'acquiredOn', formalHasOwn(source, 'acquiredOn')),
         statusChangedOn: formalDate(source.statusChangedOn, opts.today || now, false, 'statusChangedOn', formalHasOwn(source, 'statusChangedOn')),
@@ -2739,6 +2768,13 @@ function validateFormalV2Asset(value) {
             if (!Object.prototype.hasOwnProperty.call(expected, 'indexBlockId')) expected.indexBlockId = null;
             if (!Object.prototype.hasOwnProperty.call(expected, 'relatedNotes')) expected.relatedNotes = [];
         }
+        if (expected.status !== ASSET_STATUS.WISHLIST
+            && (!Object.prototype.hasOwnProperty.call(expected, 'brandId')
+                || !Object.prototype.hasOwnProperty.call(expected, 'channelId'))) {
+            expected = Object.assign({}, expected);
+            if (!Object.prototype.hasOwnProperty.call(expected, 'brandId')) expected.brandId = null;
+            if (!Object.prototype.hasOwnProperty.call(expected, 'channelId')) expected.channelId = null;
+        }
         const exact = formalDeepEqual(normalized, expected);
         return validationResult(exact ? [] : ['asset must already be in canonical formal-v2 form']);
     } catch (error) {
@@ -2756,7 +2792,7 @@ function normalizeFormalV2AssetPatch(asset, patch) {
     }
     const allowed = current.status === ASSET_STATUS.WISHLIST
         ? ['name', 'status', 'currency', 'cover', 'updatedAt', 'wishlist']
-        : ['name', 'status', 'currency', 'acquiredOn', 'statusChangedOn', 'categoryId', 'tagIds', 'cover', 'notes', 'updatedAt', 'details', 'indexBlockId', 'relatedNotes'];
+        : ['name', 'status', 'currency', 'acquiredOn', 'statusChangedOn', 'categoryId', 'tagIds', 'cover', 'notes', 'updatedAt', 'details', 'indexBlockId', 'relatedNotes', 'brandId', 'channelId'];
     assertFormalKnownKeys(source, allowed, 'patch');
     const result = Object.assign({}, source);
     if (Object.prototype.hasOwnProperty.call(source, 'details')) {
@@ -3197,6 +3233,14 @@ function applyFilter(assets, filter) {
     if (Array.isArray(filter.tagIds) && filter.tagIds.length > 0) {
         const ids = new Set(filter.tagIds.map(id => String(id).trim().toLowerCase()));
         list = list.filter(a => Array.isArray(a.tagIds) && a.tagIds.some(id => ids.has(id)));
+    }
+    if (Array.isArray(filter.brandIds) && filter.brandIds.length > 0) {
+        const brandIds = new Set(filter.brandIds.map(id => String(id).trim().toLowerCase()));
+        list = list.filter(a => a.brandId != null && brandIds.has(a.brandId));
+    }
+    if (Array.isArray(filter.channelIds) && filter.channelIds.length > 0) {
+        const channelIds = new Set(filter.channelIds.map(id => String(id).trim().toLowerCase()));
+        list = list.filter(a => a.channelId != null && channelIds.has(a.channelId));
     }
     return sortAssets(list, filter.sort || 'default', filter.financialEvents);
 }
@@ -3686,6 +3730,8 @@ function buildFormalReport(snapshot, filterInput, options) {
         assets: cards,
         counts: { total: cards.length, byKind: createDict(), byStatus: createDict() },
         tags: { uniqueCount: 0, byTagId: createDict() },
+        brand: { uniqueCount: 0, byId: createDict() },
+        channel: { uniqueCount: 0, byId: createDict() },
         amounts: {
             acquisitionByCurrency: createDict(),
             netByCurrency: createDict(),
@@ -3735,6 +3781,12 @@ function buildFormalReport(snapshot, filterInput, options) {
     report.wishlist.purchaseRate = wishlistIds.size ? purchasedIds.size / wishlistIds.size : 0;
     report.wishlist.abandonRate = wishlistIds.size ? abandonedIds.size / wishlistIds.size : 0;
 
+    const dimensionRefsByAssetId = createDict();
+    selected.forEach(asset => {
+        if (asset.brandId == null && asset.channelId == null) return;
+        dimensionRefsByAssetId[asset.id] = { brandId: asset.brandId, channelId: asset.channelId };
+    });
+
     cards.forEach(card => {
         incrementFormalGroup(report.counts.byKind, card.kind, 'counts.byKind');
         incrementFormalGroup(report.counts.byStatus, card.status, 'counts.byStatus');
@@ -3743,6 +3795,17 @@ function buildFormalReport(snapshot, filterInput, options) {
             report.tags.byTagId[tagId].count = safeAddFormal(report.tags.byTagId[tagId].count, 1, 'tags.count');
             report.tags.byTagId[tagId].assetIds.push(card.id);
         });
+        const dimensionRefs = dimensionRefsByAssetId[card.id];
+        if (dimensionRefs) {
+            ['brandId', 'channelId'].forEach(refKey => {
+                const refValue = dimensionRefs[refKey];
+                if (refValue == null) return;
+                const group = refKey === 'brandId' ? report.brand.byId : report.channel.byId;
+                if (!hasOwn(group, refValue)) group[refValue] = { count: 0, assetIds: [] };
+                group[refValue].count = safeAddFormal(group[refValue].count, 1, refKey + '.count');
+                group[refValue].assetIds.push(card.id);
+            });
+        }
         incrementFormalMinorBucket(report.amounts.acquisitionByCurrency, card.currency, 'amountMinor', card.acquisition.amountMinor, 'assetCount');
         if (card.status === ASSET_STATUS.ACTIVE) {
             if (!hasOwn(report.amounts.netByCurrency, card.currency)) report.amounts.netByCurrency[card.currency] = {
@@ -3970,6 +4033,8 @@ function buildFormalReport(snapshot, filterInput, options) {
             report.dataCoverage.lifecycleEvents.selected, 1, 'lifecycleEvents.selected');
     });
     report.tags.uniqueCount = Object.keys(report.tags.byTagId).length;
+    report.brand.uniqueCount = Object.keys(report.brand.byId).length;
+    report.channel.uniqueCount = Object.keys(report.channel.byId).length;
     Object.keys(report.rankings.byCurrency).forEach(currency => report.rankings.byCurrency[currency].sort((left, right) => {
         if (left.netAmountMinor === right.netAmountMinor) return left.name.localeCompare(right.name);
         return left.netAmountMinor < right.netAmountMinor ? 1 : -1;
@@ -4200,8 +4265,8 @@ const AGENT_ERROR_DEFINITIONS = Object.freeze({
         'zh-CN': { message: '资产引用的标签不存在。', recovery: '使用 asset_tag_create 传入准确标签名创建并绑定后重试。' },
     },
     TAG_LIMIT_EXCEEDED: {
-        'en-US': { message: 'An asset can have at most three tags.', recovery: 'Remove a tag or replace the tags with no more than three exact labels, then retry.' },
-        'zh-CN': { message: '每个资产最多绑定 3 个标签。', recovery: '先移除标签，或用不超过 3 个准确标签执行替换后重试。' },
+        'en-US': { message: 'An asset can have at most 32 tags.', recovery: 'Remove a tag or replace the tags with no more than 32 exact labels, then retry.' },
+        'zh-CN': { message: '每个资产最多绑定 32 个标签。', recovery: '先移除标签，或用不超过 32 个准确标签执行替换后重试。' },
     },
     INVALID_PAGINATION: {
         'en-US': { message: 'The search paging values are invalid.', recovery: 'Use a non-negative offset and a page size within the supported limit.' },
@@ -4779,6 +4844,35 @@ function safeTagCatalog(tags) {
     })).filter(tag => tag.id && tag.label);
 }
 
+function safeDimensionCatalog(dimensions) {
+    const wrapper = isPlainObject(dimensions) ? dimensions : {};
+    const project = entries => (Array.isArray(entries) ? entries : []).map(entry => ({
+        id: entry && typeof entry.id === 'string' ? entry.id : '',
+        label: redactText(entry && entry.label, 120),
+        color: entry && typeof entry.color === 'string' ? entry.color.trim().slice(0, 32) || null : null,
+    })).filter(entry => entry.id && entry.label);
+    return { brands: project(wrapper.brands), channels: project(wrapper.channels) };
+}
+
+function directoryIdSet(domain, key) {
+    const wrapper = domain && isPlainObject(domain.dimensions) ? domain.dimensions : null;
+    if (!wrapper || !Array.isArray(wrapper[key])) return null;
+    return new Set((wrapper[key]).map(entry => String(entry && entry.id || '').trim().toLowerCase()).filter(Boolean));
+}
+
+function directoryRef(value, field, domain, key) {
+    if (value == null) return null;
+    if (typeof value !== 'string' || !isUUID(value.trim())) {
+        throw actionError('INVALID_ARGS', field + ' must be a ' + key.slice(0, -1) + ' UUID or null');
+    }
+    const id = value.trim().toLowerCase();
+    const known = directoryIdSet(domain, key);
+    if (known && !known.has(id)) {
+        throw actionError('INVALID_ARGS', field + ' must reference an existing ' + key + ' entry or null');
+    }
+    return id;
+}
+
 function projectDisplay(asset, tags, locale) {
     const tagById = new Map(safeTagCatalog(tags).map(tag => [tag.id.toLowerCase(), tag]));
     const cycle = asset.kind === FORMAL_ASSET_KIND.VIRTUAL_SUBSCRIPTION
@@ -4910,7 +5004,12 @@ function queryDetail(args, domain) {
 }
 
 function queryTags(domain, locale) {
-    return { value: safeTagCatalog(domain.tags), total: Array.isArray(domain.tags) ? domain.tags.length : 0 };
+    return {
+        value: Object.assign(safeDimensionCatalog(domain.dimensions), {
+            tags: safeTagCatalog(domain.tags),
+        }),
+        total: Array.isArray(domain.tags) ? domain.tags.length : 0,
+    };
 }
 
 function displayMaps(locale) {
@@ -4965,7 +5064,7 @@ function querySummary(domain, locale) {
     };
 }
 
-function validateCreateArgs(raw) {
+function validateCreateArgs(raw, domain) {
     const optionKeys = ['purchaseAmountMinor', 'prepaidInitialAmountMinor', 'prepaidOpeningCount', 'subscriptionPeriodEnd'];
     assertKnownKeys(raw, ['data', 'options'].concat(optionKeys), 'args');
     if (!isPlainObject(raw.data)) throw actionError('INVALID_ARGS', 'data is required and must be an object');
@@ -5006,6 +5105,18 @@ function validateCreateArgs(raw) {
     if (options.prepaidOpeningCount != null && data.kind !== FORMAL_ASSET_KIND.PREPAID_COUNT) {
         throw actionError('INVALID_ARGS', 'prepaidOpeningCount is only accepted for prepaidCount');
     }
+    if (data.brandId != null) {
+        const knownBrands = directoryIdSet(domain, 'brands');
+        if (knownBrands && !knownBrands.has(data.brandId)) {
+            throw actionError('INVALID_ARGS', 'data.brandId must reference an existing brands entry');
+        }
+    }
+    if (data.channelId != null) {
+        const knownChannels = directoryIdSet(domain, 'channels');
+        if (knownChannels && !knownChannels.has(data.channelId)) {
+            throw actionError('INVALID_ARGS', 'data.channelId must reference an existing channels entry');
+        }
+    }
     return { data: data, options: Object.assign({}, options) };
 }
 
@@ -5015,7 +5126,7 @@ function validateUpdateArgs(raw, domain) {
     const current = domain.assets.find(asset => asset && asset.id === id);
     if (!current) throw actionError('ASSET_NOT_FOUND', 'assetId was not found');
     if (!isPlainObject(raw.patch)) throw actionError('INVALID_ARGS', 'patch is required and must be an object');
-    assertKnownKeys(raw.patch, ['name', 'category', 'categoryId', 'tagIds', 'notes', 'acquiredOn', 'details'], 'patch');
+    assertKnownKeys(raw.patch, ['name', 'category', 'categoryId', 'tagIds', 'notes', 'acquiredOn', 'details', 'brandId', 'channelId'], 'patch');
     const patch = Object.assign({}, raw.patch);
     if (hasOwn(patch, 'name')) optionalString(patch.name, 'patch.name', 200);
     if (hasOwn(patch, 'category') && hasOwn(patch, 'categoryId')) throw actionError('INVALID_ARGS', 'use either category or categoryId, not both');
@@ -5031,14 +5142,16 @@ function validateUpdateArgs(raw, domain) {
         optionalBusinessDate(patch.acquiredOn, 'patch.acquiredOn');
     }
     if (hasOwn(patch, 'tagIds')) {
-        if (!Array.isArray(patch.tagIds) || patch.tagIds.length > 3 || patch.tagIds.some(idValue => typeof idValue !== 'string' || !isUUID(idValue.toLowerCase()))) {
-            throw actionError('INVALID_ARGS', 'patch.tagIds must contain at most 3 UUIDs');
+        if (!Array.isArray(patch.tagIds) || patch.tagIds.length > 32 || patch.tagIds.some(idValue => typeof idValue !== 'string' || !isUUID(idValue.toLowerCase()))) {
+            throw actionError('INVALID_ARGS', 'patch.tagIds must contain at most 32 UUIDs');
         }
         const tagIds = new Set((Array.isArray(domain.tags) ? domain.tags : []).map(tag => String(tag && tag.id || '').toLowerCase()));
         if (patch.tagIds.some(idValue => !tagIds.has(String(idValue).trim().toLowerCase()))) {
             throw actionError('TAG_CREATE_REQUIRED', 'patch.tagIds must refer to existing tags');
         }
     }
+    if (hasOwn(patch, 'brandId')) patch.brandId = directoryRef(patch.brandId, 'patch.brandId', domain, 'brands');
+    if (hasOwn(patch, 'channelId')) patch.channelId = directoryRef(patch.channelId, 'patch.channelId', domain, 'channels');
     if (hasOwn(patch, 'notes')) optionalString(patch.notes, 'patch.notes', 5000);
     if (hasOwn(patch, 'details')) {
         if (!isPlainObject(patch.details)) throw actionError('INVALID_ARGS', 'patch.details must be an object');
@@ -5260,7 +5373,7 @@ function createAgentActionHandlers(options) {
     });
     const create = wrap('asset_create', 'aiAllowCreate', async raw => {
         const domain = await requireDomain(getDomain);
-        const args = validateCreateArgs(raw);
+        const args = validateCreateArgs(raw, domain);
         const asset = await call('addAsset', [args.data, args.options]);
         return writeResult('asset_create', projectSafeAsset(asset, Object.assign({}, domain, { assets: domain.assets.concat(asset) })));
     });
@@ -5368,15 +5481,15 @@ function createAgentActionHandlers(options) {
 }
 
 const AGENT_ACTION_DESCRIPTIONS = Object.freeze({
-    asset_query: 'Call with JSON args {"action":"query","op":"count|search|detail|summary|tags","locale":"zh_CN|zh-CN|en_US|en-US"}. For "how many and what are they", call search once: it returns the page plus meta.total, so do not call count first or request detail for every row unless the user asks. count accepts status/kind/categoryId (digital/appliance/home/otherPhysical/member/software/service/domain/ai/otherVirtual/prepaidAmount/prepaidCount, matching the asset kind)/tag/tagId/currency filters and returns complete aggregates. search accepts the same filters plus search, offset, pageSize (default 50, max 200), and returns raw machine fields plus localized display labels and tag labels. tags returns a safe tag directory. detail requires exact assetId and optional includeNotes. summary takes only action and op. Query first, then use the explicit assetId for every write; names are never identifiers.',
-    asset_create: 'Call with JSON args {"action":"create","data":<formal-v2 asset object>,"purchaseAmountMinor":<optional integer>,...}. Never put priceMinor or any price field inside data. Opening fields are top-level: purchaseAmountMinor (for CNY 99.00 use 9900), prepaidInitialAmountMinor, prepaidOpeningCount, subscriptionPeriodEnd. data accepts name, kind, currency, categoryId, tagIds (existing tag UUIDs, max 3; prefer tag tools by label), notes, acquiredOn (YYYY-MM-DD start date anchoring the first subscription period; defaults to today; pair with top-level subscriptionPeriodEnd for an exact first period), and details by kind: physical {warrantyEndsOn, costGoal{targetDailyAmountMinor, targetEndsOn}}; virtualSubscription {planName, accountLabel, billingPlan{cycle: monthly|quarterly|halfYearly|yearly}, autoRenew}; virtualPerpetual {licenseAccountLabel}; prepaidAmount/prepaidCount {provider, expiresOn}. categoryId must match kind: digital/appliance/home/otherPhysical (physical), member/software/service/domain/ai/otherVirtual (virtual), prepaidAmount/prepaidCount (prepaid). For a wishlist item use data.status="wishlist" with data.wishlist {expectedAmountMinor, reason, targetGroup: physical|virtual|prepaid, heartbeatTarget 1-999}; wishlist mode accepts no categoryId/tagIds/notes/details or opening fields. Query first when choosing an existing asset; writes always use explicit IDs.',
-    asset_update: 'Call with JSON args {"action":"update","assetId":"<exact lowercase UUID>","patch":<limited patch>}. patch allows name, acquiredOn for owned non-subscriptions, categoryId or an exact category label, tagIds (existing tag UUIDs, max 3), notes, and restricted details by kind: physical {warrantyEndsOn, costGoal{targetDailyAmountMinor, targetEndsOn}}; virtualSubscription {planName, billingPlan{cycle}}; prepaidAmount/prepaidCount {provider, expiresOn}; virtualPerpetual has no agent-editable details. Subscription acquiredOn must use asset_lifecycle op=updateStartDate. It cannot change kind, status, currency, IDs, index links, related notes, cover paths, accounts, or credentials. For tag labels use asset_tag_update or asset_tag_create. For price correction use asset_price_update first. Query first and never guess a duplicate name.',
+    asset_query: 'Call with JSON args {"action":"query","op":"count|search|detail|summary|tags","locale":"zh_CN|zh-CN|en_US|en-US"}. For "how many and what are they", call search once: it returns the page plus meta.total, so do not call count first or request detail for every row unless the user asks. count accepts status/kind/categoryId (digital/appliance/home/otherPhysical/member/software/service/domain/ai/otherVirtual/prepaidAmount/prepaidCount, matching the asset kind)/tag/tagId/currency filters and returns complete aggregates. search accepts the same filters plus search, offset, pageSize (default 50, max 200), and returns raw machine fields plus localized display labels and tag labels. tags returns a safe directory: tags plus the brand and channel catalogs (id/label[/color]) used by asset brandId/channelId fields. detail requires exact assetId and optional includeNotes. summary takes only action and op. Query first, then use the explicit assetId for every write; names are never identifiers.',
+    asset_create: 'Call with JSON args {"action":"create","data":<formal-v2 asset object>,"purchaseAmountMinor":<optional integer>,...}. Never put priceMinor or any price field inside data. Opening fields are top-level: purchaseAmountMinor (for CNY 99.00 use 9900), prepaidInitialAmountMinor, prepaidOpeningCount, subscriptionPeriodEnd. data accepts name, kind, currency, categoryId, tagIds (existing tag UUIDs, max 32; prefer tag tools by label), brandId / channelId (existing brand or channel UUIDs from the tags directory query, or null to leave unset; owned assets only), notes, acquiredOn (YYYY-MM-DD start date anchoring the first subscription period; defaults to today; pair with top-level subscriptionPeriodEnd for an exact first period), and details by kind: physical {warrantyEndsOn, costGoal{targetDailyAmountMinor, targetEndsOn}}; virtualSubscription {planName, accountLabel, billingPlan{cycle: monthly|quarterly|halfYearly|yearly}, autoRenew}; virtualPerpetual {licenseAccountLabel}; prepaidAmount/prepaidCount {provider, expiresOn}. categoryId must match kind: digital/appliance/home/otherPhysical (physical), member/software/service/domain/ai/otherVirtual (virtual), prepaidAmount/prepaidCount (prepaid). For a wishlist item use data.status="wishlist" with data.wishlist {expectedAmountMinor, reason, targetGroup: physical|virtual|prepaid, heartbeatTarget 1-999}; wishlist mode accepts no categoryId/tagIds/brandId/channelId/notes/details or opening fields. Query first when choosing an existing asset; writes always use explicit IDs.',
+    asset_update: 'Call with JSON args {"action":"update","assetId":"<exact lowercase UUID>","patch":<limited patch>}. patch allows name, acquiredOn for owned non-subscriptions, categoryId or an exact category label, tagIds (existing tag UUIDs, max 32), brandId / channelId (existing brand or channel UUIDs from the tags directory query, or null to clear), notes, and restricted details by kind: physical {warrantyEndsOn, costGoal{targetDailyAmountMinor, targetEndsOn}}; virtualSubscription {planName, billingPlan{cycle}}; prepaidAmount/prepaidCount {provider, expiresOn}; virtualPerpetual has no agent-editable details. Subscription acquiredOn must use asset_lifecycle op=updateStartDate. It cannot change kind, status, currency, IDs, index links, related notes, cover paths, accounts, or credentials. For tag labels use asset_tag_update or asset_tag_create. For price correction use asset_price_update first. Query first and never guess a duplicate name.',
     asset_lifecycle: 'Call with JSON args {"action":"update","op":"setStatus|retire|sale|renewSubscription|toggleAutoRenew|updateStartDate|updatePeriodEnd","assetId":"<exact lowercase UUID>",...}. setStatus requires status; retire accepts retiredDate/note; sale requires positive priceMinor and accepts soldOn/note; renewSubscription requires amountMinor and accepts startDate/endDate/cycle; toggleAutoRenew requires boolean enabled; updateStartDate changes a subscription start date (required startDate; optional endDate re-anchors the first period end); updatePeriodEnd changes the latest subscription period end date (required endDate). sale and renewSubscription also require records permission. Query first and use an explicit assetId.',
     asset_record: 'Call with JSON args {"action":"create|update","op":"purchaseAmount|subscriptionPaymentAmount|maintenance|prepaidTransaction|prepaidAdjust|prepaidConsumption","assetId":"<exact lowercase UUID>",...}. For price correction use action=update: purchaseAmount handles physical/virtualPerpetual/prepaid assets with non-negative amountMinor; subscriptionPaymentAmount handles the latest subscription payment with positive amountMinor (>0), so CNY 20.00 is 2000. Price correction uses formal replacement audit, never maintenance, renewSubscription, or a difference event. For maintenance/prepaidTransaction/prepaidAdjust/prepaidConsumption use action=create. maintenance requires type repair|maintain and non-negative amountMinor/date/note; prepaidTransaction requires a kind-specific type (amount kind: inflow|outflow|adjust|refund; count kind: inflow|outflow|adjust) and non-negative amountMinor or count; paymentAmountMinor is only accepted for count inflow; prepaidAdjust requires targetCount; prepaidConsumption requires positive count. Dates are YYYY-MM-DD and amounts are safe integer minor units. Query first and use an explicit assetId.',
     asset_price_update: 'Use this dedicated tool first for any price correction. Call with JSON args {"action":"update","assetId":"<exact lowercase UUID>","amountMinor":<integer>}. It automatically routes physical/virtualPerpetual/prepaid to the purchase event and virtualSubscription to the latest subscription payment. CNY 20.00 is 2000. It performs a formal void-and-replace correction, keeps one active financial event, does not create a maintenance difference or a new subscription period, and requires the records permission. Query first and use an explicit assetId; do not use asset_update.patch, maintenance, or renewSubscription for price correction.',
     asset_delete: 'Call with JSON args {"action":"delete","assetId":"<exact lowercase UUID>"}. This permanently deletes the asset and its formal sidecar records through the plugin transaction. Query first, require an explicit assetId, and never infer an ID from a name.',
-    asset_tag_update: 'Call with JSON args {"action":"update","assetId":"<exact lowercase UUID>","labels":["Exact tag label"],"mode":"add|remove|replace"}. Labels are trimmed and matched case-insensitively by exact label only; fuzzy guesses are rejected. mode defaults to add, and replace runs only when explicitly supplied. Existing tags only; requires modify permission. An asset may have at most three tags.',
-    asset_tag_create: 'Call with JSON args {"action":"create","assetId":"<exact lowercase UUID>","labels":["Tag label"],"mode":"add|replace"}. Missing labels are created and bound in one formal transaction; concurrent requests reuse an existing exact-match tag instead of creating an orphan. Requires both create and modify permissions plus Agent write confirmation. Labels are trimmed, case-insensitive exact matches, and an asset may have at most three tags.',
+    asset_tag_update: 'Call with JSON args {"action":"update","assetId":"<exact lowercase UUID>","labels":["Exact tag label"],"mode":"add|remove|replace"}. Labels are trimmed and matched case-insensitively by exact label only; fuzzy guesses are rejected. mode defaults to add, and replace runs only when explicitly supplied. Existing tags only; requires modify permission. An asset may have at most 32 tags.',
+    asset_tag_create: 'Call with JSON args {"action":"create","assetId":"<exact lowercase UUID>","labels":["Tag label"],"mode":"add|replace"}. Missing labels are created and bound in one formal transaction; concurrent requests reuse an existing exact-match tag instead of creating an orphan. Requires both create and modify permissions plus Agent write confirmation. Labels are trimmed, case-insensitive exact matches, and an asset may have at most 32 tags.',
 });
 
     return {AGENT_SCHEMA,
@@ -5448,6 +5561,7 @@ const STORAGE_FILES = Object.freeze({
     assets: 'assets.json',
     settings: 'settings.json',
     tags: 'tags.json',
+    dimensions: 'dimensions.json',
     maintenance: 'maintenance.json',
     usage: 'usage.json',
     operationLogs: 'operationLogs.json',
@@ -5493,6 +5607,7 @@ const USAGE_MAX = 1000;           // v0.16-T4-α：使用记录上限（与 OPER
 const TAG_MAX = 200;              // v0.17-T1-α（M12）：tag 上限（与 OPERATION_LOG_MAX 同语义，尾部截断）
 const PREPAID_TRANSACTION_MAX = 3000;
 const TAG_ITEM_KEYS = Object.freeze(['id', 'label', 'emoji', 'color', 'isSystem', 'createdAt']);
+const DIMENSIONS_DIRECTORY_KEYS = Object.freeze(['brands', 'channels']);
 
 const FORMAL_ERROR_CODE = Object.freeze({
     RESET_REQUIRED: 'FORMAL_SCHEMA_RESET_REQUIRED',
@@ -5510,7 +5625,7 @@ const FORMAL_BACKUP_FORMAT = 'siyuan-asset-management-backup';
 const FORMAL_BACKUP_SCHEMA_VERSION = 1;
 const RAW_RESET_BACKUP_FORMAT = 'siyuan-asset-management-raw-reset-backup';
 const FORMAL_BACKUP_DATA_KEYS = Object.freeze([
-    'assets', 'tags', 'wishlistEvents', 'operationLogs', 'maintenance', 'usage',
+    'assets', 'tags', 'dimensions', 'wishlistEvents', 'operationLogs', 'maintenance', 'usage',
     'prepaidTransactions', 'financialEvents', 'lifecycleEvents',
     'subscriptionPeriods', 'exchangeRates',
 ]);
@@ -5538,6 +5653,7 @@ const FORMAL_SIDECAR_DEFINITIONS = Object.freeze({
     lifecycleEvents: Object.freeze({ file: STORAGE_FILES.lifecycleEvents, recordKey: 'events' }),
     subscriptionPeriods: Object.freeze({ file: STORAGE_FILES.subscriptionPeriods, recordKey: 'records' }),
     exchangeRates: Object.freeze({ file: STORAGE_FILES.exchangeRates, objectPayload: true }),
+    dimensions: Object.freeze({ file: STORAGE_FILES.dimensions, dimensionsPayload: true }),
 });
 
 function formalStorageError(code, message, detail) {
@@ -5576,9 +5692,12 @@ function assertStrictFormalAssetWrapper(raw) {
 function readStrictFormalSidecar(raw, key) {
     const definition = FORMAL_SIDECAR_DEFINITIONS[key];
     if (!definition) throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID, 'unknown formal sidecar ' + key);
-    if (isMissingStoragePayload(raw)) return definition.objectPayload
-        ? { schemaVersion: SIDECAR_SCHEMA, baseCurrency: 'CNY', rates: {} }
-        : { schemaVersion: SIDECAR_SCHEMA, [definition.recordKey]: [] };
+    if (isMissingStoragePayload(raw)) {
+        if (definition.dimensionsPayload) return emptyFormalDimensionsSnapshot();
+        return definition.objectPayload
+            ? { schemaVersion: SIDECAR_SCHEMA, baseCurrency: 'CNY', rates: {} }
+            : { schemaVersion: SIDECAR_SCHEMA, [definition.recordKey]: [] };
+    }
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
         throw formalStorageError(FORMAL_ERROR_CODE.STORAGE_CORRUPT, definition.file + ' must contain an object wrapper');
     }
@@ -5587,6 +5706,7 @@ function readStrictFormalSidecar(raw, key) {
             definition.file + ' is not a strict v1 sidecar wrapper');
     }
     if (definition.objectPayload) return assertFormalExchangeRates(raw);
+    if (definition.dimensionsPayload) return readStrictFormalDimensions(raw);
     if (!Array.isArray(raw[definition.recordKey])) {
         throw formalStorageError(FORMAL_ERROR_CODE.STORAGE_CORRUPT,
             definition.file + ' must contain a ' + definition.recordKey + ' array');
@@ -5596,6 +5716,52 @@ function readStrictFormalSidecar(raw, key) {
     if (unknown.length) throw formalStorageError(FORMAL_ERROR_CODE.STORAGE_CORRUPT,
         definition.file + ' contains unsupported field ' + unknown[0]);
     return cloneStorageSnapshot(raw);
+}
+
+function emptyFormalDimensionsSnapshot() {
+    return { schemaVersion: SIDECAR_SCHEMA, brands: [], channels: [] };
+}
+function readStrictFormalDimensions(raw) {
+    if (isMissingStoragePayload(raw)) return emptyFormalDimensionsSnapshot();
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        throw formalStorageError(FORMAL_ERROR_CODE.STORAGE_CORRUPT, 'dimensions.json must contain an object wrapper');
+    }
+    if (raw.schemaVersion !== SIDECAR_SCHEMA) {
+        throw formalStorageError(FORMAL_ERROR_CODE.RESET_REQUIRED,
+            'dimensions.json is not a strict v1 sidecar wrapper');
+    }
+    const allowed = ['schemaVersion'].concat(DIMENSIONS_DIRECTORY_KEYS).concat(['updatedAt']);
+    const unknown = Object.keys(raw).filter(key => allowed.indexOf(key) < 0);
+    if (unknown.length) throw formalStorageError(FORMAL_ERROR_CODE.STORAGE_CORRUPT,
+        'dimensions.json contains unsupported field ' + unknown[0]);
+    if (raw.updatedAt != null && !isFormalInstantString(raw.updatedAt)) {
+        throw formalStorageError(FORMAL_ERROR_CODE.STORAGE_CORRUPT, 'dimensions.json updatedAt is invalid');
+    }
+    const directories = DIMENSIONS_DIRECTORY_KEYS.map(key => {
+        if (!Array.isArray(raw[key])) throw formalStorageError(FORMAL_ERROR_CODE.STORAGE_CORRUPT,
+            'dimensions.json must contain a ' + key + ' array');
+        return [key, normalizeTagDirectory(raw[key])];
+    });
+    const seen = new Set();
+    directories.forEach(([, directory]) => directory.forEach(entry => {
+        if (seen.has(entry.id)) throw formalStorageError(FORMAL_ERROR_CODE.REFERENCE_INVALID,
+            'dimensions.json contains duplicate directory id ' + entry.id);
+        seen.add(entry.id);
+    }));
+    const payload = { schemaVersion: SIDECAR_SCHEMA };
+    if (raw.updatedAt != null) payload.updatedAt = raw.updatedAt;
+    directories.forEach(([key, directory]) => { payload[key] = directory; });
+    return payload;
+}
+function dimensionsPayloadForChange(value, now) {
+    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    const directories = DIMENSIONS_DIRECTORY_KEYS.map(key => {
+        if (!Array.isArray(source[key])) {
+            throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID, 'dimensions must contain a ' + key + ' array');
+        }
+        return [key, normalizeTagDirectory(source[key])];
+    });
+    return Object.assign({ schemaVersion: SIDECAR_SCHEMA, updatedAt: now }, Object.fromEntries(directories));
 }
 
 function assertFormalKnownRecordKeys(record, allowed, path) {
@@ -5707,7 +5873,7 @@ function getCanonicalFormalOperationSnapshot(value) {
     return validation.valid ? value : null;
 }
 
-function assertFormalOperationLog(record, path, owned, wishlistIds, tagsById, records, recordIndex) {
+function assertFormalOperationLog(record, path, owned, wishlistIds, tagsById, dimensionsById, records, recordIndex) {
     assertFormalKnownRecordKeys(record, ['id', 'type', 'assetId', 'assetName', 'field', 'oldValue', 'newValue', 'ts'], path);
     if (typeof record.assetId !== 'string' || !isUUID(record.assetId) || record.assetId !== record.assetId.toLowerCase()) {
         throw formalStorageError(FORMAL_ERROR_CODE.STORAGE_CORRUPT, path + '.assetId must be a lowercase UUID');
@@ -5720,6 +5886,9 @@ function assertFormalOperationLog(record, path, owned, wishlistIds, tagsById, re
     const purchase = record.type === 'wishlist-to-active' || record.type === 'wishlist-purchase';
     const tagOperation = record.type === 'tag-create' || record.type === 'tag-delete';
     const tagStyleUpdate = record.type === 'tag-update';
+    const directoryOperation = record.type === 'brand-create' || record.type === 'brand-delete'
+        || record.type === 'channel-create' || record.type === 'channel-delete';
+    const directoryStyleUpdate = record.type === 'brand-update' || record.type === 'channel-update';
     const hasHistoricalOwnerName = (owner, historicalName) => {
         if (owner.name === historicalName) return true;
         let expectedName = historicalName;
@@ -5744,7 +5913,8 @@ function assertFormalOperationLog(record, path, owned, wishlistIds, tagsById, re
         return false;
     };
     if (ordinary.indexOf(record.type) < 0 && record.type !== 'delete'
-        && record.type !== 'wishlist-abandon' && !purchase && !tagOperation && !tagStyleUpdate) {
+        && record.type !== 'wishlist-abandon' && !purchase && !tagOperation && !tagStyleUpdate
+        && !directoryOperation && !directoryStyleUpdate) {
         throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID, path + '.type is invalid');
     }
     if (typeof record.assetName !== 'string' || (record.field !== null && typeof record.field !== 'string') || !isFormalInstantString(record.ts)) throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID, path + ' has invalid metadata');
@@ -5782,6 +5952,48 @@ function assertFormalOperationLog(record, path, owned, wishlistIds, tagsById, re
             }
         } else if (record.newValue !== null) {
             throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID, path + '.newValue must be null for tag-delete');
+        }
+        return;
+    }
+    if (directoryStyleUpdate) {
+        if (record.field !== 'color') {
+            throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID, path + '.field must be "color" for ' + record.type);
+        }
+        const validDirectoryColorValue = value => value === null || (typeof value === 'string' && value === value.trim());
+        if (!validDirectoryColorValue(record.oldValue) || !validDirectoryColorValue(record.newValue)) {
+            throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID,
+                path + ' ' + record.type + ' values must be null or trimmed color strings');
+        }
+        const currentDirectoryEntry = dimensionsById && dimensionsById.get(record.assetId);
+        if (currentDirectoryEntry && currentDirectoryEntry.label !== record.assetName) {
+            throw formalStorageError(FORMAL_ERROR_CODE.REFERENCE_INVALID,
+                path + ' ' + record.type + ' does not match the current directory entry');
+        }
+        return;
+    }
+    if (directoryOperation) {
+        const isDirectoryCreate = record.type === 'brand-create' || record.type === 'channel-create';
+        const terminalDeleteType = record.type === 'brand-create' ? 'brand-delete'
+            : record.type === 'channel-create' ? 'channel-delete' : record.type;
+        const directorySnapshot = isDirectoryCreate ? record.newValue : record.oldValue;
+        let normalizedDirectoryEntry;
+        try { normalizedDirectoryEntry = normalizeTagDirectory([directorySnapshot])[0]; }
+        catch (cause) { throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID, path + ' has invalid directory snapshot: ' + cause.message); }
+        if (normalizedDirectoryEntry.id !== record.assetId || normalizedDirectoryEntry.label !== record.assetName || record.field !== null) {
+            throw formalStorageError(FORMAL_ERROR_CODE.REFERENCE_INVALID, path + ' directory snapshot does not match operation log');
+        }
+        const sameDirectoryIdentity = value => !!value && value.id === normalizedDirectoryEntry.id && value.label === normalizedDirectoryEntry.label;
+        if (isDirectoryCreate) {
+            const currentDirectoryEntry = dimensionsById && dimensionsById.get(record.assetId);
+            const terminalDirectoryDelete = (records || []).find(candidate => candidate && candidate.type === terminalDeleteType
+                && candidate.assetId === record.assetId && candidate.assetName === record.assetName
+                && sameDirectoryIdentity(candidate.oldValue)
+                && isFormalInstantString(candidate.ts) && Date.parse(candidate.ts) >= Date.parse(record.ts));
+            if ((!currentDirectoryEntry || !sameDirectoryIdentity(currentDirectoryEntry)) && !terminalDirectoryDelete || record.oldValue !== null) {
+                throw formalStorageError(FORMAL_ERROR_CODE.REFERENCE_INVALID, path + ' does not match the current directory entry');
+            }
+        } else if (record.newValue !== null) {
+            throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID, path + '.newValue must be null for ' + record.type);
         }
         return;
     }
@@ -5935,10 +6147,22 @@ function assertFormalDomainSnapshot(snapshot) {
         tagsById.set(tag.id, tag);
     });
 
+    const dimensions = readStrictFormalDimensions(snapshot.dimensions);
+    const dimensionsById = new Map();
+    dimensions.brands.concat(dimensions.channels).forEach(entry => {
+        if (globalIds.has(entry.id)) throw formalStorageError(FORMAL_ERROR_CODE.REFERENCE_INVALID, 'duplicate global id ' + entry.id);
+        globalIds.add(entry.id);
+        dimensionsById.set(entry.id, entry);
+    });
+
     const sidecars = {};
     Object.keys(FORMAL_SIDECAR_DEFINITIONS).forEach(key => {
-        const payload = readStrictFormalSidecar(snapshot[key], key);
         const definition = FORMAL_SIDECAR_DEFINITIONS[key];
+        if (definition.dimensionsPayload) {
+            sidecars[key] = cloneStorageSnapshot(dimensions);
+            return;
+        }
+        const payload = readStrictFormalSidecar(snapshot[key], key);
         if (definition.objectPayload) {
             sidecars[key] = cloneStorageSnapshot(payload);
             return;
@@ -5958,7 +6182,7 @@ function assertFormalDomainSnapshot(snapshot) {
             }
             if (key === 'maintenance') assertFormalMaintenance(record, path, owned);
             if (key === 'operationLogs') {
-                assertFormalOperationLog(record, path, owned, wishlistIds, tagsById, records, index);
+                assertFormalOperationLog(record, path, owned, wishlistIds, tagsById, dimensionsById, records, index);
                 return;
             }
             const owner = assertFormalOwnedRecord(record, path, owned);
@@ -6206,7 +6430,8 @@ function cloneFormalDomainWrappers(validated) {
     const result = { assets: cloneStorageSnapshot(validated.assets), tags: cloneStorageSnapshot(validated.tags) };
     Object.keys(FORMAL_SIDECAR_DEFINITIONS).forEach(key => {
         const definition = FORMAL_SIDECAR_DEFINITIONS[key];
-        result[key] = definition.objectPayload ? cloneStorageSnapshot(validated.sidecars[key])
+        result[key] = definition.objectPayload || definition.dimensionsPayload
+            ? cloneStorageSnapshot(validated.sidecars[key])
             : { schemaVersion: SIDECAR_SCHEMA, [definition.recordKey]: validated.sidecars[key].map(cloneStorageSnapshot) };
     });
     return result;
@@ -6220,9 +6445,11 @@ function createFormalResetSnapshot(options) {
     };
     Object.keys(FORMAL_SIDECAR_DEFINITIONS).forEach(key => {
         const definition = FORMAL_SIDECAR_DEFINITIONS[key];
-        snapshot[key] = definition.objectPayload
-            ? { schemaVersion: SIDECAR_SCHEMA, baseCurrency: 'CNY', rates: {}, updatedAt: now }
-            : { schemaVersion: SIDECAR_SCHEMA, [definition.recordKey]: [], updatedAt: now };
+        snapshot[key] = definition.dimensionsPayload
+            ? { schemaVersion: SIDECAR_SCHEMA, brands: [], channels: [], updatedAt: now }
+            : definition.objectPayload
+                ? { schemaVersion: SIDECAR_SCHEMA, baseCurrency: 'CNY', rates: {}, updatedAt: now }
+                : { schemaVersion: SIDECAR_SCHEMA, [definition.recordKey]: [], updatedAt: now };
     });
     return snapshot;
 }
@@ -6682,6 +6909,14 @@ function readFormalV2BackupSnapshot(options) {
                             && ownDataValue(rates, key) !== undefined).length
                         : rawArrayCount(raw.exchangeRates, ['rates', 'records', 'items']);
                 })(),
+                dimensions: (() => {
+                    const wrapper = raw.dimensions;
+                    if (!wrapper || typeof wrapper !== 'object' || Array.isArray(wrapper)) return 0;
+                    return DIMENSIONS_DIRECTORY_KEYS.reduce((total, key) => {
+                        const directory = ownDataValue(wrapper, key);
+                        return total + (Array.isArray(directory) ? directory.length : 0);
+                    }, 0);
+                })(),
             };
             const rawAssets = Array.isArray(raw.assets) ? raw.assets
                 : ['assets', 'records', 'items'].map(key => ownDataValue(raw.assets, key)).find(Array.isArray) || [];
@@ -6706,7 +6941,7 @@ function readFormalV2BackupSnapshot(options) {
             tags: validated.tags.tags.map(cloneStorageSnapshot),
         };
         Object.keys(FORMAL_SIDECAR_DEFINITIONS).forEach(key => {
-            result[key] = FORMAL_SIDECAR_DEFINITIONS[key].objectPayload
+            result[key] = FORMAL_SIDECAR_DEFINITIONS[key].objectPayload || FORMAL_SIDECAR_DEFINITIONS[key].dimensionsPayload
                 ? cloneStorageSnapshot(validated.sidecars[key])
                 : validated.sidecars[key].map(cloneStorageSnapshot);
         });
@@ -6730,6 +6965,7 @@ function readFormalV2AssetDomainSnapshot() {
             const tags = Array.isArray(value) ? value : value && value.tags;
             return { schemaVersion: SIDECAR_SCHEMA, tags: normalizeTagDirectory(tags), updatedAt: now };
         }
+        if (key === 'dimensions') return dimensionsPayloadForChange(value, now);
         const definition = FORMAL_SIDECAR_DEFINITIONS[key];
         if (!definition) throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID, 'unsupported formal change key ' + key);
         if (definition.objectPayload) {
@@ -6757,6 +6993,7 @@ function formalV2PayloadForChange(key, value, now) {
             const tags = Array.isArray(value) ? value : value && value.tags;
             return { schemaVersion: SIDECAR_SCHEMA, tags: normalizeTagDirectory(tags), updatedAt: now };
         }
+        if (key === 'dimensions') return dimensionsPayloadForChange(value, now);
         const definition = FORMAL_SIDECAR_DEFINITIONS[key];
         if (!definition) throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID, 'unsupported formal change key ' + key);
         if (definition.objectPayload) {
@@ -6775,7 +7012,9 @@ function formalV2PayloadForChange(key, value, now) {
     }
 
     async function commitFormalPayloads(payloads, originalRaw, capability, operation) {
-        const order = ['tags', 'assets'].concat(Object.keys(FORMAL_SIDECAR_DEFINITIONS)).concat(['settings'])
+        const order = ['tags', 'dimensions', 'assets']
+            .concat(Object.keys(FORMAL_SIDECAR_DEFINITIONS).filter(key => key !== 'dimensions'))
+            .concat(['settings'])
             .filter(key => Object.prototype.hasOwnProperty.call(payloads, key));
         const fileFor = key => key === 'assets' ? STORAGE_FILES.assets
             : (key === 'settings' ? STORAGE_FILES.settings
@@ -6852,7 +7091,7 @@ function formalV2PayloadForChange(key, value, now) {
             };
             Object.keys(FORMAL_SIDECAR_DEFINITIONS).forEach(key => {
                 const definition = FORMAL_SIDECAR_DEFINITIONS[key];
-                complete[key] = definition.objectPayload
+                complete[key] = definition.objectPayload || definition.dimensionsPayload
                     ? cloneStorageSnapshot(validatedCurrent.sidecars[key])
                     : { schemaVersion: SIDECAR_SCHEMA, [definition.recordKey]: validatedCurrent.sidecars[key].slice() };
             });
@@ -6875,7 +7114,7 @@ function formalV2PayloadForChange(key, value, now) {
             result.tags = complete.tags.tags.map(cloneStorageSnapshot);
             Object.keys(FORMAL_SIDECAR_DEFINITIONS).forEach(key => {
                 const definition = FORMAL_SIDECAR_DEFINITIONS[key];
-                result[key] = definition.objectPayload
+                result[key] = definition.objectPayload || definition.dimensionsPayload
                     ? cloneStorageSnapshot(complete[key])
                     : complete[key][definition.recordKey].map(cloneStorageSnapshot);
             });
@@ -6911,7 +7150,7 @@ function runFormalV2AssetPersistenceTransaction(changeOrPrepare) {
             };
             Object.keys(FORMAL_SIDECAR_DEFINITIONS).forEach(key => {
                 const definition = FORMAL_SIDECAR_DEFINITIONS[key];
-                complete[key] = definition.objectPayload
+                complete[key] = definition.objectPayload || definition.dimensionsPayload
                     ? cloneStorageSnapshot(validatedCurrent.sidecars[key])
                     : { schemaVersion: SIDECAR_SCHEMA, [definition.recordKey]: validatedCurrent.sidecars[key].slice() };
             });
@@ -6934,7 +7173,7 @@ function runFormalV2AssetPersistenceTransaction(changeOrPrepare) {
             result.tags = complete.tags.tags.map(cloneStorageSnapshot);
             Object.keys(FORMAL_SIDECAR_DEFINITIONS).forEach(key => {
                 const definition = FORMAL_SIDECAR_DEFINITIONS[key];
-                result[key] = definition.objectPayload
+                result[key] = definition.objectPayload || definition.dimensionsPayload
                     ? cloneStorageSnapshot(complete[key])
                     : complete[key][definition.recordKey].map(cloneStorageSnapshot);
             });
@@ -7009,6 +7248,9 @@ function runFormalV2AssetPersistenceTransaction(changeOrPrepare) {
                 subscriptionPeriods: originalRaw.subscriptionPeriods && Array.isArray(originalRaw.subscriptionPeriods.records) ? originalRaw.subscriptionPeriods.records.length : 0,
                 exchangeRates: originalRaw.exchangeRates && originalRaw.exchangeRates.rates && typeof originalRaw.exchangeRates.rates === 'object'
                     ? Object.keys(originalRaw.exchangeRates.rates).length : 0,
+                dimensions: originalRaw.dimensions && typeof originalRaw.dimensions === 'object' && !Array.isArray(originalRaw.dimensions)
+                    ? DIMENSIONS_DIRECTORY_KEYS.reduce((total, key) => total + (Array.isArray(originalRaw.dimensions[key]) ? originalRaw.dimensions[key].length : 0), 0)
+                    : 0,
             });
             return result;
         });
@@ -8547,7 +8789,7 @@ const exchangeRateApi = __am_fx;
 const { Plugin, Dialog, Menu, openTab, openMobileFileById } = require("siyuan");
 
 const DOCK_TYPE = "asset-management-dock";
-const PLUGIN_VERSION = "2.6.4";
+const PLUGIN_VERSION = "2.6.5";
 const AUTHOR_URL = "https://ld246.com/member/Dilyar";
 const ICONS8_URL = "https://icons8.com";
 
@@ -8662,6 +8904,9 @@ module.exports = class AssetManagementPlugin extends Plugin {
         if (!this.i18n || typeof this.i18n !== "object") this.i18n = this._i18nMap;
         this.assets = [];
         this._tags = [];
+        // v2.6.5 阶段2a：品牌 / 入手途径展示目录（dimensions.json），与 _tags 同模式
+        this._brands = [];
+        this._channels = [];
         this._assetsLoadedOk = false;
         // A formal view is only allowed to consume one complete, validated
         // snapshot. Never render a partial domain after an individual sidecar
@@ -8669,9 +8914,10 @@ module.exports = class AssetManagementPlugin extends Plugin {
         this._formalDomainLoaded = false;
         this._formalDomainError = null;
         this._formalDomainStateSnapshot = null;
-        // Home filters are formal-domain only. categoryId and tagIds are canonical
-        // controlled IDs/UUIDs; do not reintroduce deprecated model fields.
-        this.filter = { kind: "all", categoryId: "all", tagIds: [], status: "all", search: "", sort: "default" };
+        // Home filters are formal-domain only. categoryId/tagIds/brandIds/channelIds are
+        // canonical controlled IDs/UUIDs; do not reintroduce deprecated model fields.
+        // v2.6.5 阶段3b：brandIds / channelIds 为品牌 / 途径目录 UUID（OR 语义，applyFilter 已支持）。
+        this.filter = { kind: "all", categoryId: "all", tagIds: [], brandIds: [], channelIds: [], status: "all", search: "", sort: "default" };
         // 看板时间只控制购买数量趋势，不落盘、不筛选资产总览。
         this.dashboardTimeRange = '12m';
         // v2.6.3 补充：报表合并分析卡当前选中 tab（subscription | prepaid | wishlist）；
@@ -8679,6 +8925,11 @@ module.exports = class AssetManagementPlugin extends Plugin {
         // 供 report-analysis-tab 委托校验，避免接受不可用区块。
         this._reportAnalysisTab = null;
         this._reportAnalysisTabsCache = [];
+        // v2.6.5 阶段3a：维度分析卡当前选中维度（brand | channel）；null 表示尚未选择，
+        // 渲染时回退到第一个可用维度。可用集在每次渲染时缓存，供 report-dimension-tab
+        // 委托校验；tab 态独立于 v2.6.3 分析卡（_reportAnalysisTab）。
+        this._reportDimensionTab = null;
+        this._reportDimensionTabsCache = [];
         this._activeHomeFilterDropdown = null;
         this._itemMenu = null;
         // v0.17-T3-α（M13 批量操作 · 入口）：批量模式标志 + 选中集
@@ -8780,9 +9031,14 @@ this.dockElement = null;
         const rememberedSort = remembered && typeof remembered.sort === 'string' && remembered.sort
             && SORTS.some(sort => sort.id === remembered.sort) ? remembered.sort : null;
         this.filter.sort = rememberedSort || (this.settings ? this.settings.defaultSort : 'default');
-        // tagIds：逐项为字符串即可，不校验存在性（标签可能暂被删除，保留 id 便于恢复）。
+        // tagIds / brandIds / channelIds：逐项为字符串即可，不校验存在性（目录条目可能
+        // 暂被删除，保留 id 便于恢复）；v2.6.5 阶段3b：非数组一律兜底 []。
         this.filter.tagIds = remembered && Array.isArray(remembered.tagIds)
             ? remembered.tagIds.filter(id => typeof id === 'string' && id) : [];
+        this.filter.brandIds = remembered && Array.isArray(remembered.brandIds)
+            ? remembered.brandIds.filter(id => typeof id === 'string' && id) : [];
+        this.filter.channelIds = remembered && Array.isArray(remembered.channelIds)
+            ? remembered.channelIds.filter(id => typeof id === 'string' && id) : [];
     }
 
     /**
@@ -8798,6 +9054,8 @@ this.dockElement = null;
                 kind: this._kindToDisplayGroup(this.filter.kind),
                 sort: typeof this.filter.sort === 'string' && this.filter.sort ? this.filter.sort : 'default',
                 tagIds: Array.isArray(this.filter.tagIds) ? this.filter.tagIds.slice() : [],
+                brandIds: Array.isArray(this.filter.brandIds) ? this.filter.brandIds.slice() : [],
+                channelIds: Array.isArray(this.filter.channelIds) ? this.filter.channelIds.slice() : [],
             };
             const saved = this.saveSettings({ rememberedFilters: snapshot });
             if (saved && typeof saved.catch === 'function') {
@@ -10111,6 +10369,9 @@ openWishlistAbandonSheet(id) {
             this._formalDomainStateSnapshot = snapshot;
             this.assets = snapshot.assets;
             this._tags = snapshot.tags;
+            // v2.6.5 阶段2a：dimensions.json 双目录回写（缺文件时 readStrictFormalDimensions 返回空目录）
+            this._brands = snapshot.dimensions && Array.isArray(snapshot.dimensions.brands) ? snapshot.dimensions.brands : [];
+            this._channels = snapshot.dimensions && Array.isArray(snapshot.dimensions.channels) ? snapshot.dimensions.channels : [];
             this._financialEvents = snapshot.financialEvents;
 this._subscriptionPeriods = snapshot.subscriptionPeriods;
             this._prepaidTransactions = snapshot.prepaidTransactions;
@@ -10366,6 +10627,10 @@ this._subscriptionPeriods = snapshot.subscriptionPeriods;
                 const next = await resourceIndex.reconcileResourceIndex({
                     state: this.settings.resourceIndex,
                     assets: this.assets,
+                    // v2.6.5 阶段4：投影目录标签（tagLabels/brandLabel/channelLabel），
+                    // 悬挂引用由 resource-index 统一兜底为 '[missing:…]'。
+                    tags: this._tags,
+                    dimensions: { brands: this._brands, channels: this._channels },
                     target: target,
                     // In-flight requests cannot be cancelled, but no subsequent
                     // document API request may start once this plugin is unloaded.
@@ -10505,6 +10770,12 @@ this._subscriptionPeriods = snapshot.subscriptionPeriods;
         if (!transaction || transaction.noop) return transaction && transaction.context;
         this.assets = transaction.assets;
         this._tags = transaction.tags;
+        // v2.6.5 阶段2a：事务结果恒带 dimensions wrapper（formal transaction 对每个
+        // FORMAL_SIDECAR_DEFINITIONS 键都回包），双目录内存缓存随事务统一刷新。
+        if (transaction.dimensions && typeof transaction.dimensions === 'object') {
+            this._brands = Array.isArray(transaction.dimensions.brands) ? transaction.dimensions.brands : [];
+            this._channels = Array.isArray(transaction.dimensions.channels) ? transaction.dimensions.channels : [];
+        }
         this._financialEvents = transaction.financialEvents;
         this._subscriptionPeriods = transaction.subscriptionPeriods;
         this._prepaidTransactions = transaction.prepaidTransactions;
@@ -11727,6 +11998,12 @@ async deleteFormalWorkflowRecord(id, mode, recordId) {
     // checkValidity 全部不变；选中后对 hidden input dispatch input+change（与 datepicker pick 一致），
     // 既有 change 联动监听只需把选择器从 select 换成 input。弹层定位 / 外点关闭 / 滚动跟随与
     // _bindAmDatepickers 同构（fixed + body 挂载 + capture 监听）。同一时刻只开一个弹层。
+    // 阶段 2b：必填项视觉标识 —— label 尾部小红点。纯视觉标记，不参与任何校验；
+    // 仅允许加在"必填"字段的可见 label 之后，选填字段禁止使用（降低填写压力）。
+    _requiredDotHtml() {
+        return '<i class="am-required-dot" aria-hidden="true"></i>';
+    }
+
     _glassCycleOptions() {
         return FORMAL_BILLING_CYCLES.map(cycle => ({ value: cycle, label: this._t('formalCycle' + cycle, cycle === 'halfYearly' ? '半年付' : cycle) }));
     }
@@ -12063,10 +12340,10 @@ async deleteFormalWorkflowRecord(id, mode, recordId) {
         const renderTrigger = (kind) => {
             const state = this._getHomeFilterDropdownState(kind);
             const labelKey = kind === 'kind' ? 'filterDisplayGroup'
-                : kind === 'tag' ? 'filterTag'
+                : kind === 'tag' ? 'filterChip'
                     : kind === 'status' ? 'filterStatus' : 'filterSort';
             const labelFallback = kind === 'kind' ? '类型'
-                : kind === 'tag' ? '标签'
+                : kind === 'tag' ? '筛选'
                     : kind === 'status' ? '状态' : '排序';
             return `<button type="button" class="am-filter-select am-filter-trigger${state.active ? ' is-active' : ''}" data-action="toggle-home-filter-dropdown" data-filter-kind="${kind}" aria-label="${escapeHtml(this._t(labelKey, labelFallback))}" aria-haspopup="${kind === 'tag' ? 'dialog' : 'menu'}" aria-expanded="false"><span class="am-filter-trigger__label">${escapeHtml(state.label)}</span><span class="am-filter-trigger__count" ${state.count ? '' : 'hidden'}>${escapeHtml(state.count || '')}</span><svg class="am-filter-trigger__chevron" viewBox="0 0 24 24" aria-hidden="true"><use xlink:href="#iconChevronDown"/></svg></button>`;
         };
@@ -12119,11 +12396,17 @@ async deleteFormalWorkflowRecord(id, mode, recordId) {
         return [];
     }
 
+    /** v2.6.5 阶段3b：筛选 chip 计数 = 标签 + 品牌 + 途径 三维度已选总数（非数组按 0）。 */
+    _homeFilterChipCount() {
+        const sizeOf = list => Array.isArray(list) ? list.length : 0;
+        return sizeOf(this.filter.tagIds) + sizeOf(this.filter.brandIds) + sizeOf(this.filter.channelIds);
+    }
+
     _getHomeFilterDropdownState(kind) {
         if (kind === 'tag') {
-            const count = Array.isArray(this.filter.tagIds) ? this.filter.tagIds.length : 0;
+            const count = this._homeFilterChipCount();
             return {
-                label: this._t('filterTag', '标签'),
+                label: this._t('filterChip', '筛选'),
                 count: count > 0 ? String(count) : '',
                 active: count > 0,
             };
@@ -12173,6 +12456,9 @@ _closeHomeFilterDropdown(expectedDropdown) {
         }
         if (active.dropdown && active.dropdown.parentNode) active.dropdown.parentNode.removeChild(active.dropdown);
         this._activeHomeFilterDropdown = null;
+        // v2.6.5 阶段3b：首页筛选下拉当前 tab（'tag' | 'brand' | 'channel'）。
+        // 仅视图态：开面板保持上次 tab，不持久化、不参与筛选记忆。
+        this._homeFilterMultiTab = 'tag';
     }
 
     openHomeFilterDropdown(trigger, kind) {
@@ -12188,7 +12474,7 @@ _closeHomeFilterDropdown(expectedDropdown) {
         dropdown.setAttribute('role', kind === 'tag' ? 'dialog' : 'menu');
         const dropdownLabelKey = kind === 'kind' ? 'filterDisplayGroup'
             : kind === 'category' ? 'fieldCategory'
-            : kind === 'tag' ? 'tagFilterTitle'
+            : kind === 'tag' ? 'filterChip'
                 : kind === 'status' ? 'filterStatus' : 'filterSort';
         dropdown.setAttribute('aria-label', this._t(dropdownLabelKey, '筛选'));
         document.body.appendChild(dropdown);
@@ -12218,8 +12504,9 @@ _closeHomeFilterDropdown(expectedDropdown) {
             dropdown.style.top = `${Math.round(rect.bottom + 2)}px`;
             dropdown.style.maxWidth = `${Math.floor(availableWidth)}px`;
             dropdown.style.maxHeight = `${Math.max(44, Math.floor(viewportHeight - rect.bottom - edge - 2))}px`;
-            /* v2.3.0-hotfix：tag 面板 minWidth 196→164，配合头部文字缩小整体收窄 */
-            dropdown.style.minWidth = `${Math.min(Math.max(Math.round(rect.width), kind === 'tag' ? 164 : 152), availableWidth)}px`;
+            /* v2.3.0-hotfix：tag 面板 minWidth 196→164，配合头部文字缩小整体收窄。
+               v2.6.5 阶段3b：面板加三 tab（标签/品牌/途径）后 164 过窄，放宽到 220。 */
+            dropdown.style.minWidth = `${Math.min(Math.max(Math.round(rect.width), kind === 'tag' ? 220 : 152), availableWidth)}px`;
             const dropdownWidth = Math.min(dropdown.offsetWidth || rect.width, availableWidth);
             /* v2.3.0 阶段4.1：tag 下拉右对齐（右边缘 = trigger 右边缘），其余下拉左对齐 trigger；
                最后在 [boundLeft, boundRight] 内统一 clamp（dropdownWidth ≤ availableWidth 恒成立，clamp 不越界）。 */
@@ -12244,32 +12531,68 @@ _closeHomeFilterDropdown(expectedDropdown) {
         };
         this._activeHomeFilterDropdown = { dropdown, trigger, kind, cleanup };
 
-const updateTagFilter = nextIds => {
-            this.filter.tagIds = Array.isArray(nextIds) ? nextIds : [];
-            // v2.6.4 筛选记忆：标签选择/清除/全选切换统一走此入口，一次写回。
-            this._rememberHomeFilters();
-            this._updateHomeFilterDropdownTrigger('tag');
-            renderDropdown();
+/* v2.6.5 阶段3b：筛选下拉三维 tab（标签 / 品牌 / 途径）。tab 是实例视图态
+           （_homeFilterMultiTab），开面板保持上次 tab；条目与全选交互完全复用标签板块形态。
+           维度 → filter 键 / 数据目录 / 空态文案 解析集中在此，板块渲染与事件绑定共用。 */
+        const FILTER_DIMENSIONS = ['tag', 'brand', 'channel'];
+        const dimensionFilterKey = dim => dim === 'tag' ? 'tagIds' : dim === 'brand' ? 'brandIds' : 'channelIds';
+        const dimensionCatalog = dim => dim === 'tag' ? this._getAssetTagCatalog()
+            : dim === 'brand' ? this._getDimensionDirectory('brands')
+                : this._getDimensionDirectory('channels');
+        const dimensionSelectedIds = dim => {
+            const list = this.filter[dimensionFilterKey(dim)];
+            return Array.isArray(list) ? list : [];
+        };
+        const normalizeDimension = dim => FILTER_DIMENSIONS.indexOf(dim) >= 0 ? dim : 'tag';
+        this._homeFilterMultiTab = normalizeDimension(this._homeFilterMultiTab);
+        const refreshListAfterFilterChange = () => {
             // v1.3.1-fix：用 refreshList 只刷新列表内容，不关闭下拉（支持多选标签）。
             // 之前误用 refreshMainContent → renderDock → _closeHomeFilterDropdown 会立即
             // 关闭下拉；且 applyFilter 的 normalizeTagIds ReferenceError 导致整个 dock 崩溃。
             try { this.refreshList(); } catch (err) { console.warn('[AssetManagement] refreshList failed:', err && err.message); }
         };
-        const renderTagDropdown = () => {
-            const selectedIds = Array.isArray(this.filter.tagIds) ? this.filter.tagIds : [];
-            const tags = this._getAssetTagCatalog();
-            const tagsHtml = tags.length
-                ? `<div class="am-home-filter-dropdown__tags">${tags.map(tag => { const isSelected = selectedIds.indexOf(tag.id)>= 0; /* v2.3.0 阶段3：筛选 chip 按 tag.color 上底色（模板表达式内禁用 // 行注释，concat 会并行使行注释吞代码） */ const chipColor = this._tagChipColorAttrs(tag.color); return`<button type="button" class="am-home-filter-dropdown__tag${isSelected ? ' is-active' : ''}${chipColor.cls}" data-tag-id="${escapeHtml(tag.id)}" aria-pressed="${isSelected}"${chipColor.style}>
-                        <span>${escapeHtml(tag.label)}</span><span class="am-home-filter-dropdown__check" aria-hidden="true">${isSelected ? '✓' : ''}</span>
+        const updateDimFilter = (dimension, nextIds) => {
+            this.filter[dimensionFilterKey(dimension)] = Array.isArray(nextIds) ? nextIds : [];
+            // v2.6.4 筛选记忆：标签选择/清除/全选切换统一走此入口，一次写回。
+            this._rememberHomeFilters();
+            this._updateHomeFilterDropdownTrigger('tag');
+            renderDropdown();
+            refreshListAfterFilterChange();
+        };
+        /* 清除筛选覆盖三维度：一次写回快照 + 一次 refreshList，不逐维度三连触发。 */
+        const clearAllDimFilters = () => {
+            FILTER_DIMENSIONS.forEach(dim => { this.filter[dimensionFilterKey(dim)] = []; });
+            this._rememberHomeFilters();
+            this._updateHomeFilterDropdownTrigger('tag');
+            renderDropdown();
+            refreshListAfterFilterChange();
+        };
+        const renderMultiFilterDropdown = () => {
+            /* v2.6.5 阶段3b：标签 / 品牌 / 途径 三 tab。tab 容器复用报表维度分段控件样式
+               （.am-dashboard-analysis__tabs 无父容器耦合，亮暗两套齐全）；板块渲染、全选
+               切换、清除入口与原标签板块完全同构，仅数据源与 filter 键按维度解析。 */
+            const dim = normalizeDimension(this._homeFilterMultiTab);
+            const dimensionLabels = {
+                tag: this._t('filterTag', '标签'),
+                brand: this._t('reportDimensionTabBrand', '品牌'),
+                channel: this._t('reportDimensionTabChannel', '途径'),
+            };
+            const dimensionEmptyKeys = { tag: ['tagFilterEmpty', '暂无标签'], brand: ['filterBrandEmpty', '暂无品牌'], channel: ['filterChannelEmpty', '暂无途径'] };
+            const tabsHtml = `<div class="am-dashboard-analysis__tabs" role="tablist">${FILTER_DIMENSIONS.map(key =>`<button type="button" role="tab" aria-selected="${key === dim ? 'true' : 'false'}" class="${key === dim ? 'is-active' : ''}" data-dim-tab="${key}">${escapeHtml(dimensionLabels[key])}</button>`).join('')}</div>`;
+            const selectedIds = dimensionSelectedIds(dim);
+            const entries = dimensionCatalog(dim);
+            const entriesHtml = entries.length
+                ? `<div class="am-home-filter-dropdown__tags">${entries.map(entry => { const isSelected = selectedIds.indexOf(entry.id)>= 0; /* v2.3.0 阶段3：筛选 chip 按 entry.color 上底色（模板表达式内禁用 // 行注释，concat 会并行使行注释吞代码） */ const chipColor = this._tagChipColorAttrs(entry.color); return`<button type="button" class="am-home-filter-dropdown__tag${isSelected ? ' is-active' : ''}${chipColor.cls}" data-dim="${dim}" data-dim-entry-id="${escapeHtml(entry.id)}" aria-pressed="${isSelected}"${chipColor.style}>
+                        <span>${escapeHtml(entry.label)}</span><span class="am-home-filter-dropdown__check" aria-hidden="true">${isSelected ? '✓' : ''}</span>
                     </button>`; }).join('')}</div>`
-                : `<div class="am-home-filter-dropdown__empty">${escapeHtml(this._t('tagFilterEmpty', '暂无标签'))}</div>`;
-            /* v2.3.0 阶段4.2：全选/取消全选合并为单个切换按钮——已选集合 == 全部标签（且目录非空）
+                : `<div class="am-home-filter-dropdown__empty">${escapeHtml(this._t(dimensionEmptyKeys[dim][0], dimensionEmptyKeys[dim][1]))}</div>`;
+            /* v2.3.0 阶段4.2：全选/取消全选合并为单个切换按钮——已选集合 == 全部条目（且目录非空）
                时显示「取消全选」（点击清空），否则显示「全选」（点击全选）。复用既有 i18n key
-               tagFilterSelectAll / tagFilterDeselectAll；updateTagFilter 会触发 renderDropdown 重绘，
+               tagFilterSelectAll / tagFilterDeselectAll；updateDimFilter 会触发 renderDropdown 重绘，
                按钮文案随状态天然更新。 */
-            const allSelected = tags.length > 0 && tags.every(tag => selectedIds.indexOf(tag.id) >= 0);
+            const allSelected = entries.length > 0 && entries.every(entry => selectedIds.indexOf(entry.id) >= 0);
             const toggleLabel = allSelected ? this._t('tagFilterDeselectAll', '取消全选') : this._t('tagFilterSelectAll', '全选');
-            return `<div class="am-home-filter-dropdown__header"><span>${escapeHtml(this._t('tagFilterTitle', '按标签筛选'))}</span><button type="button" class="am-home-filter-dropdown__clear" data-tag-clear>${escapeHtml(this._t('tagFilterClear', '清除筛选'))}</button></div><div class="am-home-filter-dropdown__tag-actions"><button type="button" data-tag-toggle-all>${escapeHtml(toggleLabel)}</button></div>${tagsHtml}`;
+            return `<div class="am-home-filter-dropdown__header"><span>${escapeHtml(this._t('filterChip', '筛选'))}</span><button type="button" class="am-home-filter-dropdown__clear" data-tag-clear>${escapeHtml(this._t('tagFilterClear', '清除筛选'))}</button></div> ${tabsHtml}<div class="am-home-filter-dropdown__tag-actions"><button type="button" data-tag-toggle-all>${escapeHtml(toggleLabel)}</button></div>${entriesHtml}`;
         };
         const renderSingleDropdown = () => {
             const options = this._getHomeFilterDropdownOptions(kind);
@@ -12304,31 +12627,46 @@ const bindDropdownEvents = () => {
                 });
                 return;
             }
-            dropdown.querySelectorAll('[data-tag-id]').forEach(button => {
+            /* v2.6.5 阶段3b：tab 切换只改实例视图态并重绘面板（不写筛选、不 refreshList），
+               重开面板保持上次 tab。 */
+            dropdown.querySelectorAll('[data-dim-tab]').forEach(button => {
+                button.addEventListener('click', () => {
+                    try {
+                        this._homeFilterMultiTab = normalizeDimension(button.dataset.dimTab);
+                        renderDropdown();
+                    } catch (err) {
+                        console.warn('[AssetManagement] filter tab switch failed:', err && err.message);
+                    }
+                });
+                button.setAttribute('data-action', 'home-filter-dim-tab');
+            });
+            dropdown.querySelectorAll('[data-dim-entry-id]').forEach(button => {
                 button.addEventListener('click', e => {
                     try {
-                        const id = button.dataset.tagId;
+                        const id = button.dataset.dimEntryId;
+                        const dim = normalizeDimension(button.dataset.dim);
                         if (!id) return;
-                        const nextIds = Array.isArray(this.filter.tagIds) ? this.filter.tagIds.slice() : [];
+                        const nextIds = dimensionSelectedIds(dim).slice();
                         const index = nextIds.indexOf(id);
                         if (index >= 0) nextIds.splice(index, 1);
                         else nextIds.push(id);
-                        updateTagFilter(nextIds);
+                        updateDimFilter(dim, nextIds);
                     } catch (err) {
-                        console.warn('[AssetManagement] tag click failed:', err && err.message);
+                        console.warn('[AssetManagement] filter entry click failed:', err && err.message);
                     }
                 });
                 button.setAttribute('data-action', 'home-tag-pick');
             });
             const clear = dropdown.querySelector('[data-tag-clear]');
-            if (clear) { clear.addEventListener('click', () => { try { updateTagFilter([]); } catch (err) { console.warn('[AssetManagement] tag clear failed:', err && err.message); } }); clear.setAttribute('data-action', 'home-tag-clear'); }
+            if (clear) { clear.addEventListener('click', () => { try { clearAllDimFilters(); } catch (err) { console.warn('[AssetManagement] filter clear failed:', err && err.message); } }); clear.setAttribute('data-action', 'home-tag-clear'); }
             /* v2.3.0 阶段4.2：单个全选切换按钮——点击时按当前状态判定：已全选则清空，否则全选。
-               判定口径与 renderTagDropdown 的文案口径一致（已选集合 ⊇ 目录全部 id 且目录非空）。 */
+               判定口径与 renderMultiFilterDropdown 的文案口径一致（已选集合 ⊇ 当前 tab 目录全部
+               id 且目录非空）；v2.6.5 阶段3b 起作用于当前 tab 维度。 */
             const toggleAll = dropdown.querySelector('[data-tag-toggle-all]');
-            if (toggleAll) { toggleAll.addEventListener('click', () => { try { const catalog = this._getAssetTagCatalog(); const selectedIds = Array.isArray(this.filter.tagIds) ? this.filter.tagIds : []; const allSelected = catalog.length > 0 && catalog.every(tag => selectedIds.indexOf(tag.id) >= 0); updateTagFilter(allSelected ? [] : catalog.map(tag => tag.id)); } catch (err) { console.warn('[AssetManagement] tag toggleAll failed:', err && err.message); } }); toggleAll.setAttribute('data-action', 'home-tag-toggle-all'); }
+            if (toggleAll) { toggleAll.addEventListener('click', () => { try { const dim = normalizeDimension(this._homeFilterMultiTab); const catalog = dimensionCatalog(dim); const selectedIds = dimensionSelectedIds(dim); const allSelected = catalog.length > 0 && catalog.every(entry => selectedIds.indexOf(entry.id) >= 0); updateDimFilter(dim, allSelected ? [] : catalog.map(entry => entry.id)); } catch (err) { console.warn('[AssetManagement] filter toggleAll failed:', err && err.message); } }); toggleAll.setAttribute('data-action', 'home-tag-toggle-all'); }
         };
         const renderDropdown = () => {
-            dropdown.innerHTML = kind === 'tag' ? renderTagDropdown() : renderSingleDropdown();
+            dropdown.innerHTML = kind === 'tag' ? renderMultiFilterDropdown() : renderSingleDropdown();
             bindDropdownEvents();
             positionDropdown();
         };
@@ -12615,12 +12953,34 @@ const bindDropdownEvents = () => {
         const countBars = kindCount.length ? `<div class="am-dashboard-bars">${kindCount.map(item =>`<div class="am-bar-hit" data-action="dashboard-kind" data-kind="${escapeHtml(item.kind)}" title="${escapeHtml(this._t('dashboardBarTapHint', '点击查看明细'))}"><span>${escapeHtml(this._formalKindLabel(item.kind))}</span><strong>${item.value}</strong><i style="width:${(item.value / countMax * 100).toFixed(1)}%"></i></div>`).join('')}</div>` : this._renderFormalDashboardEmpty();
         const amountBars = kindAmount.length ? `<div class="am-dashboard-bars">${kindAmount.map(item =>`<div class="am-bar-hit" data-action="dashboard-kind" data-kind="${escapeHtml(item.kind)}" title="${escapeHtml(this._t('dashboardBarTapHint', '点击查看明细'))}"><span>${escapeHtml(this._formalKindLabel(item.kind))}</span><strong>${formatAmountMinor(item.value, 'CNY')}</strong><i style="width:${(item.value / amountMax * 100).toFixed(1)}%"></i></div>`).join('')}</div>` : this._renderFormalDashboardEmpty();
         // 标签排行：只列有资产引用的标签，按聚合购入金额（折 CNY）从高到低；无任何带标签资产则不渲染。
-        const tagAmount = this._reportTagAmountCny(report);
+        // v2.6.5 阶段3c：受 settings.reportShowTagRank 控制（缺键按 true = 默认显示）。
+        const showTagRank = this.settings && this.settings.reportShowTagRank !== false;
+        const tagAmount = showTagRank ? this._reportTagAmountCny(report) : [];
         const tagMax = Math.max(1, ...tagAmount.map(item => item.value));
         const tagBars = tagAmount.length ? `<div class="am-dashboard-bars">${tagAmount.map(item =>`<div class="am-bar-hit" data-action="dashboard-tag" data-tag="${escapeHtml(item.tagId)}" title="${escapeHtml(this._t('dashboardBarTapHint', '点击查看明细'))}"><span>${escapeHtml(item.label)}</span><strong>${formatAmountMinor(item.value, 'CNY')}</strong><i style="width:${(item.value / tagMax * 100).toFixed(1)}%"></i></div>`).join('')}</div>` : '';
+        // v2.6.5 阶段3a：维度分析卡（品牌 / 途径 tab 切换，独立 tab 态）。金额折 CNY 聚合
+        // 在 UI 层完成（报表契约只聚合计数与资产 id）；两个维度都无任何已设置条目时整卡
+        // 不渲染（同 tagBars 空不渲染模式）。未设置维度条目的资产归入列表末尾「未设置」行。
+        const dimensionBrandRows = this._reportDimensionRowsCny(report, 'brand');
+        const dimensionChannelRows = this._reportDimensionRowsCny(report, 'channel');
+        // v2.6.5 阶段3c：报表板块显示开关（settings.reportShowBrandRank / reportShowChannelRank，
+        // 缺键按 true 处理 = 默认显示）。品牌/途径开关全关时 dimensionTabs 为空 → 整卡不渲染；
+        // 单关时对应 tab 从可用集剔除（未设置行随 tab 一起消失）。
+        const showBrandRank = this.settings && this.settings.reportShowBrandRank !== false;
+        const showChannelRank = this.settings && this.settings.reportShowChannelRank !== false;
+        const dimensionTabs = [];
+        if (showBrandRank && dimensionBrandRows.some(row => !row.isUnset)) dimensionTabs.push('brand');
+        if (showChannelRank && dimensionChannelRows.some(row => !row.isUnset)) dimensionTabs.push('channel');
+        this._reportDimensionTabsCache = dimensionTabs;
+        const dimensionTab = dimensionTabs.indexOf(this._reportDimensionTab) >= 0 ? this._reportDimensionTab : dimensionTabs[0];
+        const dimensionRows = dimensionTab === 'channel' ? dimensionChannelRows : dimensionBrandRows;
+        const dimensionMax = Math.max(1, ...dimensionRows.map(item => item.value));
+        const dimensionRowsHtml = dimensionRows.map(row => `<div class="am-bar-hit" data-action="dashboard-${dimensionTab}"${row.isUnset ? '' :` data-${dimensionTab}="${escapeHtml(row.id)}"`} title="${escapeHtml(this._t('dashboardBarTapHint', '点击查看明细'))}"><span>${!row.isUnset && row.color ?`<span class="am-tag-popover__option-color" style="display:inline-block;vertical-align:middle;margin-right:6px;background:${escapeHtml(row.color)}"></span>`: ''}${escapeHtml(row.label)}</span><strong>${formatAmountMinor(row.value, 'CNY')}<small> · ${row.count}</small></strong><i style="width:${(row.value / dimensionMax * 100).toFixed(1)}%"></i></div>`).join('');
+        const dimensionTabsHtml = dimensionTabs.length >= 2 ? `<div class="am-dashboard-analysis__tabs" role="tablist">${dimensionTabs.map(tab => { const isActive = tab === dimensionTab; const tabLabel = tab === 'brand' ? this._t('reportDimensionTabBrand', '品牌') : this._t('reportDimensionTabChannel', '途径'); return`<button type="button" role="tab" aria-selected="${isActive ? 'true' : 'false'}" class="${isActive ? 'is-active' : ''}" data-action="report-dimension-tab" data-dimension="${tab}">${escapeHtml(tabLabel)}</button>`; }).join('')}</div>` : '';
+        const dimensionHtml = dimensionTabs.length ? `<section class="am-dashboard__surface am-dashboard-dimension"><div class="am-dashboard-analysis__head"><h3>${escapeHtml(this._t('dashboardDimensionTitle', '维度分析'))}</h3>${dimensionTabsHtml}</div><p>${escapeHtml(this._t('dashboardDimensionMeta', '按品牌 / 途径聚合购入金额（折合 ¥）'))}</p><div class="am-dashboard-bars">${dimensionRowsHtml}</div></section>` : '';
         // 产品价格排行：沿用按币种分组、净成本降序；点击改 data-action="card" 复用资产产品卡。
         const rankings = Object.entries(report.rankings.byCurrency || {}).length ? `<div class="am-dashboard-ranking">${Object.entries(report.rankings.byCurrency).map(([currency, items]) =>`<div><h4>${escapeHtml(currency)}</h4>${items.slice(0, 5).map((item, index) => `<button type="button" class="am-dashboard-asset-row" data-action="card" data-id="${escapeHtml(item.assetId)}"><i>${index + 1}</i><span>${escapeHtml(item.name)}</span><strong>${formatAmountMinor(item.netAmountMinor, currency)}${this._cnyApproxHtml(item.netAmountMinor, currency)}</strong></button>`).join('')}</div>`).join('')}</div>` : this._renderFormalDashboardEmpty();
-        return `<div class="am-dashboard"><section class="am-dashboard__surface am-dashboard-summary"><h3>${escapeHtml(this._t('dashboardSummaryTitle', '资产概览'))}</h3><span class="am-dashboard__asof">${escapeHtml(this._t('dashboardAsOfToday', '截至今天'))}</span><div class="am-dashboard-summary__grid"><div><small>${escapeHtml(this._t('dashboardTotal', '资产总数'))}</small><strong>${total}</strong></div><div><small>${escapeHtml(this._t('statusActive', '在役'))}</small><strong>${activeCount}</strong></div><div><small>${escapeHtml(this._t('statusRetired', '退役'))}</small><strong>${retiredCount}</strong></div></div>${totalAmountHtml}${retiredRecoveredHtml}</section> ${expiringHtml} ${analysisHtml} <section class="am-dashboard__surface am-dashboard-composition"><h3>${escapeHtml(this._t('dashboardCategoryTitle', '分类排行'))}</h3><div class="am-dashboard-catcols"><div class="am-dashboard-catcol"><span class="am-dashboard-catcol__title">${escapeHtml(this._t('dashboardCategoryCountTitle', '按数量'))}</span>${countBars}</div><div class="am-dashboard-catcol"><span class="am-dashboard-catcol__title">${escapeHtml(this._t('dashboardCategoryAmountTitle', '按金额'))}<small>${escapeHtml(this._t('dashboardCategoryAmountMeta', '折合 ¥'))}</small></span>${amountBars}</div></div></section> ${tagBars ?`<section class="am-dashboard__surface am-dashboard-tags"><h3>${escapeHtml(this._t('dashboardTagTitle', '标签排行'))}</h3><p>${escapeHtml(this._t('dashboardTagAmountMeta', '按标签聚合购入金额（折合 ¥）'))}</p>${tagBars}</section>`: ''} <section class="am-dashboard__surface am-dashboard-trend-section"><h3>${escapeHtml(this._t('dashboardTrendAmountTitle', '金额趋势'))}</h3><p>${escapeHtml(this._t('dashboardTrendAmountMeta', '近 12 个月购入金额（折合 ¥）'))}</p>${trendSvg}</section><section class="am-dashboard__surface"><h3>${escapeHtml(this._t('dashboardRankingTitle', '价格排行'))}</h3>${rankings}</section></div>`;
+        return `<div class="am-dashboard"><section class="am-dashboard__surface am-dashboard-summary"><h3>${escapeHtml(this._t('dashboardSummaryTitle', '资产概览'))}</h3><span class="am-dashboard__asof">${escapeHtml(this._t('dashboardAsOfToday', '截至今天'))}</span><div class="am-dashboard-summary__grid"><div><small>${escapeHtml(this._t('dashboardTotal', '资产总数'))}</small><strong>${total}</strong></div><div><small>${escapeHtml(this._t('statusActive', '在役'))}</small><strong>${activeCount}</strong></div><div><small>${escapeHtml(this._t('statusRetired', '退役'))}</small><strong>${retiredCount}</strong></div></div>${totalAmountHtml}${retiredRecoveredHtml}</section> ${expiringHtml} ${analysisHtml} <section class="am-dashboard__surface am-dashboard-composition"><h3>${escapeHtml(this._t('dashboardCategoryTitle', '分类排行'))}</h3><div class="am-dashboard-catcols"><div class="am-dashboard-catcol"><span class="am-dashboard-catcol__title">${escapeHtml(this._t('dashboardCategoryCountTitle', '按数量'))}</span>${countBars}</div><div class="am-dashboard-catcol"><span class="am-dashboard-catcol__title">${escapeHtml(this._t('dashboardCategoryAmountTitle', '按金额'))}<small>${escapeHtml(this._t('dashboardCategoryAmountMeta', '折合 ¥'))}</small></span>${amountBars}</div></div></section> ${dimensionHtml} ${tagBars ?`<section class="am-dashboard__surface am-dashboard-tags"><h3>${escapeHtml(this._t('dashboardTagTitle', '标签排行'))}</h3><p>${escapeHtml(this._t('dashboardTagAmountMeta', '按标签聚合购入金额（折合 ¥）'))}</p>${tagBars}</section>`: ''} <section class="am-dashboard__surface am-dashboard-trend-section"><h3>${escapeHtml(this._t('dashboardTrendAmountTitle', '金额趋势'))}</h3><p>${escapeHtml(this._t('dashboardTrendAmountMeta', '近 12 个月购入金额（折合 ¥）'))}</p>${trendSvg}</section><section class="am-dashboard__surface"><h3>${escapeHtml(this._t('dashboardRankingTitle', '价格排行'))}</h3>${rankings}</section></div>`;
     }
 
     // ---------- v2.6.3 补充：报表合并分析卡（订阅 / 预付 / 种草转化，tab 切换） ----------
@@ -13011,8 +13371,51 @@ const snapshot = this._formalDomainStateSnapshot || {
         }).filter(Boolean).sort((a, b) => b.value - a.value);
     }
 
+    /** v2.6.5 阶段3a：维度分析（品牌 / 途径）取数。report.brand.byId / channel.byId 只
+     *  聚合资产计数与资产 id（金额聚合不进报表契约），本层逐卡把购入金额折 CNY 求和并
+     *  按金额降序。label / color 从目录缓存（this._brands / this._channels）反查；目录
+     *  已删条目不展示（悬挂引用资产也不计入「未设置」桶——它们已设置过维度，只是目录
+     *  缺失）。存在未设置该维度的报表内资产时，列表末尾追加「未设置」行（无 swatch）。
+     *  行结构：{ id, label, color, value, count, isUnset }。 */
+    _reportDimensionRowsCny(report, dimension) {
+        const byId = (report && report[dimension] && report[dimension].byId) || {};
+        const rates = this._getExchangeRates();
+        const cardById = new Map((report.assets || []).map(card => [card && card.id, card]));
+        const cardCny = card => this._reportMinorToCny(card && card.financials && card.financials.acquisitionAmountMinor, card && card.currency, rates);
+        const catalog = dimension === 'channel' ? (Array.isArray(this._channels) ? this._channels : []) : (Array.isArray(this._brands) ? this._brands : []);
+        const assigned = new Set();
+        Object.keys(byId).forEach(id => {
+            const assetIds = byId[id] && Array.isArray(byId[id].assetIds) ? byId[id].assetIds : [];
+            assetIds.forEach(assetId => assigned.add(assetId));
+        });
+        const rows = Object.keys(byId).map(id => {
+            const meta = catalog.find(entry => entry && entry.id === id);
+            const label = meta && String(meta.label || '').trim();
+            if (!label) return null;
+            const assetIds = byId[id] && Array.isArray(byId[id].assetIds) ? byId[id].assetIds : [];
+            let value = 0;
+            assetIds.forEach(assetId => {
+                const card = cardById.get(assetId);
+                if (card) value += cardCny(card);
+            });
+            return { id: id, label: label, color: typeof meta.color === 'string' ? meta.color : '',
+                value: value, count: Number(byId[id] && byId[id].count) || 0, isUnset: false };
+        }).filter(Boolean);
+        let unsetValue = 0, unsetCount = 0;
+        (report.assets || []).forEach(card => {
+            if (!card || assigned.has(card.id)) return;
+            unsetValue += cardCny(card);
+            unsetCount += 1;
+        });
+        rows.sort((a, b) => b.value - a.value);
+        if (unsetCount > 0) rows.push({ id: '', label: this._t('dashboardDimensionUnset', '未设置'),
+            color: '', value: unsetValue, count: unsetCount, isUnset: true });
+        return rows;
+    }
+
     /** v2.1：报表互动——点击分类/标签排行弹出该分组下的产品明细（按购入金额折 CNY 降序）。
-     *  opts = { kind } 或 { tagId }。行内点击复用资产产品卡。纯展示，不写存储。 */
+     *  opts = { kind } / { tagId } / { dimension, dimensionId }（v2.6.5 阶段3a：品牌 / 途径，
+     *  dimensionId 为空 = 「未设置」桶）。行内点击复用资产产品卡。纯展示，不写存储。 */
     _openReportBreakdown(opts) {
         let report;
         try { report = this._buildFullFormalReport(this._formalDomainSnapshot()); }
@@ -13028,6 +13431,27 @@ const snapshot = this._formalDomainStateSnapshot || {
         } else if (opts && opts.kind) {
             title = this._formalKindLabel(opts.kind);
             list = cards.filter(card => card.kind === opts.kind);
+        } else if (opts && opts.dimension) {
+            // v2.6.5 阶段3a：品牌 / 途径维度明细。口径与维度分析卡完全一致：
+            // 已设置条目 = report.brand.byId / channel.byId 的 assetIds；未设置桶 =
+            // 报表内资产减去全部已归入资产（含目录条目已删的悬挂引用）。
+            const dimension = opts.dimension === 'channel' ? 'channel' : 'brand';
+            const byId = (report[dimension] && report[dimension].byId) || {};
+            const assignedIds = new Set();
+            Object.keys(byId).forEach(id => {
+                const assetIds = byId[id] && Array.isArray(byId[id].assetIds) ? byId[id].assetIds : [];
+                assetIds.forEach(assetId => assignedIds.add(assetId));
+            });
+            if (opts.dimensionId) {
+                const catalog = dimension === 'channel' ? (Array.isArray(this._channels) ? this._channels : []) : (Array.isArray(this._brands) ? this._brands : []);
+                const meta = catalog.find(entry => entry && entry.id === opts.dimensionId);
+                title = (meta && String(meta.label || '').trim()) || this._t('dashboardDimensionUnset', '未设置');
+                const entryAssetIds = byId[opts.dimensionId] && Array.isArray(byId[opts.dimensionId].assetIds) ? byId[opts.dimensionId].assetIds : [];
+                list = cards.filter(card => entryAssetIds.indexOf(card.id) >= 0);
+            } else {
+                title = this._t('dashboardDimensionUnset', '未设置');
+                list = cards.filter(card => !assignedIds.has(card.id));
+            }
         } else if (opts && opts.subscriptionState) {
             // v2.6.3 补充：订阅分析状态清单。分桶口径与报表 byState 完全一致
             //（只在役订阅卡；试用优先于状态；已停订 = expired + pendingConfirmation）。
@@ -13572,6 +13996,21 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
             case "tab-add": this.openActionSheet(); break;
             case "dashboard-kind": this._openReportBreakdown({ kind: target.dataset.kind }); break;
             case "dashboard-tag": this._openReportBreakdown({ tagId: target.dataset.tag }); break;
+            // v2.6.5 阶段3a：维度分析条目点击 → 品牌 / 途径明细弹层。未设置行不携带
+            // data-brand / data-channel 属性（dataset 取值 undefined → 空串 → 未设置桶）。
+            case "dashboard-brand": this._openReportBreakdown({ dimension: 'brand', dimensionId: target.dataset.brand || '' }); break;
+            case "dashboard-channel": this._openReportBreakdown({ dimension: 'channel', dimensionId: target.dataset.channel || '' }); break;
+            case "report-dimension-tab": {
+                // v2.6.5 阶段3a：维度分析卡 tab 切换（独立 tab 态）。只接受 brand / channel
+                // 枚举内且当轮渲染可用的维度（可用集由 renderReportPage 缓存）；刷新方式同
+                // report-analysis-tab。
+                const dimension = target.dataset.dimension;
+                if (['brand', 'channel'].indexOf(dimension) >= 0 && (this._reportDimensionTabsCache || []).indexOf(dimension) >= 0) {
+                    this._reportDimensionTab = dimension;
+                    this.refreshMainContent();
+                }
+                break;
+            }
             case "report-sub-state":
                 // v2.6.3 补充：订阅分析状态格点击 → 对应状态订阅产品清单弹层。
                 this._openReportBreakdown({ subscriptionState: target.dataset.state });
@@ -13902,6 +14341,19 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
     }
 
     /**
+     * v2.6.5 阶段3c：品牌 / 途径目录条目引用计数（镜像 _getTagReferenceCount 形态）。
+     * kind = 'brands' 按 asset.brandId 统计；kind = 'channels' 按 asset.channelId 统计。
+     */
+    _getDimensionReferenceCount(kind, entryId) {
+        const target = String(entryId || '').trim().toLowerCase();
+        if (!target) return 0;
+        const refKey = kind === 'brands' ? 'brandId' : 'channelId';
+        return (Array.isArray(this.assets) ? this.assets : []).filter(asset =>
+            String((asset && asset[refKey]) || '').trim().toLowerCase() === target
+        ).length;
+    }
+
+    /**
      * v0.17-T1-β：M12 新建一个用户 tag（system tag 不可手动新建）。
      *   - id 自增：'tag_user_<timestamp>_<rand>'
      *   - isSystem = false
@@ -14023,6 +14475,140 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
         });
         return result;
     }
+
+    // ==================== v2.6.5 阶段2a：品牌 / 入手途径目录（dimensions.json）====================
+
+    /**
+     * v2.6.5 阶段2a：品牌 / 入手途径展示目录。条目结构与标签目录一致
+     * （id/label/color/emoji/createdAt），双目录各自独立大小写不敏感唯一。
+     *   - 内存缓存 this._brands / this._channels 由 loadAssets 导入、备份导入、
+     *     formal reset 与 _commitAssetAuditMutation 事务统一回写（与 this._tags 同模式）
+     *   - create/delete/update 走 _commitAssetAuditMutation 事务：dimensions.json +
+     *     opLog（brand / channel 前缀审计类型与 tag 同构，storage 侧校验）
+     */
+    _getDimensionDirectory(kind) {
+        const list = kind === 'brands' ? this._brands : (kind === 'channels' ? this._channels : null);
+        if (!Array.isArray(list)) return [];
+        return list.filter(entry => entry && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(entry.id) && String(entry.label || '').trim())
+            .map(entry => Object.assign({}, entry, { id: String(entry.id).toLowerCase(), label: String(entry.label).trim() }))
+            .sort((left, right) => left.label.localeCompare(right.label));
+    }
+
+    /** v2.6.5 阶段2a：按 id 查找目录条目（kind = 'brands' | 'channels'），找不到返回 null */
+    _getDimensionEntryById(kind, entryId) {
+        if (!entryId) return null;
+        const target = String(entryId).trim().toLowerCase();
+        return this._getDimensionDirectory(kind).find(entry => entry.id === target) || null;
+    }
+
+    _dimensionAuditPrefix(kind) { return kind === 'brands' ? 'brand' : 'channel'; }
+
+    /** v2.6.5 阶段2a：新建目录条目（trim、≤20 字符、同目录大小写不敏感唯一），返回新条目 */
+    async _createDimensionEntry(kind, label) {
+        const safeLabel = String(label || '').trim().slice(0, 20);
+        const kindLabel = kind === 'brands' ? this._t('brandFieldLabel', '品牌名') : this._t('channelFieldLabel', '入手途径名');
+        if (!safeLabel) throw new Error(kindLabel + ' is required');
+        if (!this.storage || typeof this.storage.mutateFormalAssetDomain !== 'function') {
+            throw new Error('[AssetManagement] formal dimension storage unavailable');
+        }
+        const prefix = this._dimensionAuditPrefix(kind);
+        const duplicateKey = kind === 'brands' ? 'brandDuplicate' : 'channelDuplicate';
+        const duplicateText = kind === 'brands' ? '品牌名称已存在' : '入手途径名称已存在';
+        let created;
+        const context = await this._commitAssetAuditMutation(snapshot => {
+            const wrapper = snapshot.dimensions || {};
+            const brands = Array.isArray(wrapper.brands) ? wrapper.brands : [];
+            const channels = Array.isArray(wrapper.channels) ? wrapper.channels : [];
+            const directory = kind === 'brands' ? brands : channels;
+            if (directory.some(entry => entry && String(entry.label || '').trim().toLowerCase() === safeLabel.toLowerCase())) {
+                throw new Error(this._t(duplicateKey, duplicateText));
+            }
+            created = { id: createStableId(), label: safeLabel, createdAt: new Date().toISOString() };
+            const log = { id: createStableId(), type: prefix + '-create', assetId: created.id, assetName: created.label,
+                field: null, oldValue: null, newValue: this._cloneForSnapshot(created), ts: new Date().toISOString() };
+            const nextDimensions = kind === 'brands'
+                ? { brands: brands.concat(created), channels: channels }
+                : { brands: brands, channels: channels.concat(created) };
+            return { dimensions: nextDimensions, operationLogs: [log].concat(snapshot.operationLogs || []), context: { entry: created } };
+        });
+        return context.entry;
+    }
+
+    /**
+     * v2.6.5 阶段2a：删除目录条目。删除保护 = 被任何资产引用（asset.brandId /
+     * asset.channelId）时抛错；返回 boolean。
+     */
+    async _deleteDimensionEntry(kind, entryId) {
+        if (!entryId) return false;
+        if (!this.storage || typeof this.storage.mutateFormalAssetDomain !== 'function') {
+            throw new Error('[AssetManagement] formal dimension storage unavailable');
+        }
+        const target = String(entryId).trim().toLowerCase();
+        const refKey = kind === 'brands' ? 'brandId' : 'channelId';
+        const prefix = this._dimensionAuditPrefix(kind);
+        const referencedKey = kind === 'brands' ? 'brandDeleteReferenced' : 'channelDeleteReferenced';
+        const referencedText = kind === 'brands' ? '该品牌仍被资产引用，无法删除' : '该入手途径仍被资产引用，无法删除';
+        const context = await this._commitAssetAuditMutation(snapshot => {
+            const wrapper = snapshot.dimensions || {};
+            const brands = Array.isArray(wrapper.brands) ? wrapper.brands : [];
+            const channels = Array.isArray(wrapper.channels) ? wrapper.channels : [];
+            const directory = kind === 'brands' ? brands : channels;
+            const entry = directory.find(item => item && String(item.id || '').toLowerCase() === target);
+            if (!entry) return { noop: true, context: { deleted: false } };
+            if (snapshot.assets.some(asset => String((asset && asset[refKey]) || '').toLowerCase() === target)) {
+                throw new Error(this._t(referencedKey, referencedText));
+            }
+            const log = { id: createStableId(), type: prefix + '-delete', assetId: entry.id, assetName: entry.label,
+                field: null, oldValue: this._cloneForSnapshot(entry), newValue: null, ts: new Date().toISOString() };
+            const nextDimensions = kind === 'brands'
+                ? { brands: brands.filter(item => !item || String(item.id || '').toLowerCase() !== target), channels: channels }
+                : { brands: brands, channels: channels.filter(item => !item || String(item.id || '').toLowerCase() !== target) };
+            return { dimensions: nextDimensions, operationLogs: [log].concat(snapshot.operationLogs || []), context: { deleted: true } };
+        });
+        return !!(context && context.deleted);
+    }
+
+    /** v2.6.5 阶段2a：目录条目颜色更新（镜像 updateTag 的 color 路径），返回 boolean */
+    async _updateDimensionColor(kind, entryId, color) {
+        if (!entryId || typeof color !== 'string') return false;
+        if (!this.storage || typeof this.storage.mutateFormalAssetDomain !== 'function') {
+            throw new Error('[AssetManagement] formal dimension storage unavailable');
+        }
+        const normalized = this._normalizeTagColorInput(color);
+        const target = String(entryId).trim().toLowerCase();
+        const prefix = this._dimensionAuditPrefix(kind);
+        const context = await this._commitAssetAuditMutation(snapshot => {
+            const wrapper = snapshot.dimensions || {};
+            const brands = Array.isArray(wrapper.brands) ? wrapper.brands : [];
+            const channels = Array.isArray(wrapper.channels) ? wrapper.channels : [];
+            const directory = kind === 'brands' ? brands : channels;
+            const entry = directory.find(item => item && String(item.id || '').toLowerCase() === target);
+            if (!entry) return { noop: true, context: { updated: false } };
+            const oldValue = typeof entry.color === 'string' ? entry.color : '';
+            if (oldValue === normalized) return { noop: true, context: { updated: false, unchanged: true } };
+            const updated = Object.assign({}, entry, { color: normalized });
+            const log = { id: createStableId(), type: prefix + '-update', assetId: entry.id, assetName: entry.label,
+                field: 'color', oldValue: oldValue, newValue: normalized, ts: new Date().toISOString() };
+            const nextDirectory = directory.map(item => (item && String(item.id || '').toLowerCase() === target ? updated : item));
+            const nextDimensions = kind === 'brands'
+                ? { brands: nextDirectory, channels: channels }
+                : { brands: brands, channels: nextDirectory };
+            return { dimensions: nextDimensions, operationLogs: [log].concat(snapshot.operationLogs || []), context: { updated: true, entry: updated } };
+        });
+        return !!(context && context.updated);
+    }
+
+    /** v2.6.5 阶段2a：品牌目录对外方法（镜像 createTag/deleteTag/updateTag 形态） */
+    async createBrand(options) { return this._createDimensionEntry('brands', (options || {}).label); }
+    async deleteBrand(brandId) { return this._deleteDimensionEntry('brands', brandId); }
+    async updateBrandColor(brandId, color) { return this._updateDimensionColor('brands', brandId, color); }
+    getBrandById(brandId) { return this._getDimensionEntryById('brands', brandId); }
+
+    /** v2.6.5 阶段2a：入手途径目录对外方法（镜像 createTag/deleteTag/updateTag 形态） */
+    async createChannel(options) { return this._createDimensionEntry('channels', (options || {}).label); }
+    async deleteChannel(channelId) { return this._deleteDimensionEntry('channels', channelId); }
+    async updateChannelColor(channelId, color) { return this._updateDimensionColor('channels', channelId, color); }
+    getChannelById(channelId) { return this._getDimensionEntryById('channels', channelId); }
 
     _renderTagSelectorHtml(state, options) {
         options = options || {};
@@ -14360,9 +14946,11 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
      * @param {Object} tag 标签对象（至少 id / color）
      * @param {HTMLElement} anchor 锚点元素（行内 swatch 按钮），用于 fixed 定位
      * @param {Function} onPicked 选中回调，参数为归一化 6 位 hex 或 ''（清除）
+     * @param {string} [pickerTitle] v2.6.5 阶段3c：可选面板标题（品牌/途径目录复用时传入，缺省为「标签颜色」）
      */
-    async _openTagColorPicker(tag, anchor, onPicked) {
+    async _openTagColorPicker(tag, anchor, onPicked, pickerTitle) {
         const self = this;
+        const pickerTitleText = pickerTitle || this._t('tagColorPickerTitle', '标签颜色');
         if (!tag || !anchor) return;
         this._closeTagColorPicker();
         let customColors = [];
@@ -14394,7 +14982,7 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
         panel.className = 'am-tag-color-picker';
         panel.setAttribute('data-tag-color-picker', '');
         panel.setAttribute('role', 'dialog');
-        panel.innerHTML = '<div class="am-tag-color-picker__header"><span class="am-tag-color-picker__title">' + escapeHtml(this._t('tagColorPickerTitle', '标签颜色')) + '</span><button type="button" class="am-tag-color-picker__close" data-tcp-action="close" aria-label="' + escapeHtml(this._t('btnClose', '关闭')) + '">×</button></div>'
+        panel.innerHTML = '<div class="am-tag-color-picker__header"><span class="am-tag-color-picker__title">' + escapeHtml(pickerTitleText) + '</span><button type="button" class="am-tag-color-picker__close" data-tcp-action="close" aria-label="' + escapeHtml(this._t('btnClose', '关闭')) + '">×</button></div>'
             + '<button type="button" class="am-tag-color-picker__none' + (currentColor === '' ? ' is-selected' : '') + '" data-tcp-action="none"><span class="am-tag-color-picker__none-icon" aria-hidden="true"></span>' + escapeHtml(this._t('tagColorNone', '无颜色')) + '</button>'
             + '<div class="am-tag-color-picker__grid">' + cellsHtml + '</div>'
             + '<div class="am-tag-color-picker__custom-label">' + escapeHtml(this._t('tagColorCustom', '自定义颜色')) + '</div>'
@@ -17485,7 +18073,7 @@ closeProductCard() {
 
     openSettingsDialog() {
         const tab = "general";
-        const renderShell = () => `<div class="am-settings-dialog"><div class="am-settings__sidebar"><button class="am-settings__tab am-settings__tab--active" data-tab="general">${escapeHtml(this._t("settingsTabGeneral", "常规"))}</button><button class="am-settings__tab" data-tab="data">${escapeHtml(this._t("settingsTabData", "数据"))}</button><button class="am-settings__tab" data-tab="ai">${escapeHtml(this._t("settingsTabAI", "AI"))}</button><button class="am-settings__tab" data-settings-tab="tags" data-tab="tags">${escapeHtml(this._t("settingsTagsTitle", "标签"))}</button><button class="am-settings__tab" data-settings-tab="logs" data-tab="logs">${escapeHtml(this._t("opLogTitle", "操作日志"))}</button><button class="am-settings__tab" data-tab="about">${escapeHtml(this._t("settingsTabAbout", "关于"))}</button></div><div class="am-settings__content">${this.renderSettingsTab(tab)}</div></div>`;
+        const renderShell = () => `<div class="am-settings-dialog"><div class="am-settings__sidebar"><button class="am-settings__tab am-settings__tab--active" data-tab="general">${escapeHtml(this._t("settingsTabGeneral", "常规"))}</button><button class="am-settings__tab" data-tab="data">${escapeHtml(this._t("settingsTabData", "数据"))}</button><button class="am-settings__tab" data-tab="ai">${escapeHtml(this._t("settingsTabAI", "AI"))}</button><button class="am-settings__tab" data-settings-tab="tags" data-tab="tags">${escapeHtml(this._t("settingsCatalogTitle", "目录管理"))}</button><button class="am-settings__tab" data-settings-tab="logs" data-tab="logs">${escapeHtml(this._t("opLogTitle", "操作日志"))}</button><button class="am-settings__tab" data-tab="about">${escapeHtml(this._t("settingsTabAbout", "关于"))}</button></div><div class="am-settings__content">${this.renderSettingsTab(tab)}</div></div>`;
         this.showDialog(this._t("settingsTitle", "资产管理设置"), renderShell(), (dialog) => {
             const root = dialog.element;
             if (root.classList) root.classList.add('am-settings-dialog-host');
@@ -17505,6 +18093,9 @@ closeProductCard() {
             dialog.destroy = () => {
                 this._invalidateNoteIndexSettings(root);
                 this._closeSettingsClearAllAssetsConfirm(root);
+                // v2.6.5 阶段3c：目录管理子 tab 的删除确认弹窗挂在本弹窗根节点上，
+                // 关闭设置时同步清理，避免 _scopedConfirmByHost 残留死引用。
+                this._closeScopedConfirm(root);
                 return originalDestroy();
             };
         }, this.isMobile ? "100vw" : "720px");
@@ -17619,6 +18210,20 @@ closeProductCard() {
                     this._applyMatrixColsPreference();
                 };
             });
+            // v2.6.5 阶段3c：报表板块显示开关（标签 / 品牌 / 途径排行）。
+            // saveSettings 内部 Object.assign 合并（禁止整体覆写——v0.14 教训）；
+            // 缺键按 true 处理，勾选即时保存并刷新报表页生效。
+            root.querySelectorAll('[name="reportShowTagRank"], [name="reportShowBrandRank"], [name="reportShowChannelRank"]').forEach(el => {
+                el.onchange = async () => {
+                    const saved = await this.saveSettings({ [el.name]: el.checked === true });
+                    if (!saved) {
+                        el.checked = this.settings[el.name] !== false;
+                        this.showToast('⚠️ ' + this._t('settingsSaveFail', '设置保存失败'));
+                        return;
+                    }
+                    this.renderDock();
+                };
+            });
             // v2.6.4 P2：汇率设置重构——自动更新开关 + 刷新/恢复按钮 + 三币种手动修正。
             // 手动保存：用户填 X（1 外币 = X CNY）→ rates[cur] = 1/X 合并进当前 rates，
             // 整体替换写入（source='manual'）→ 更新缓存 → 刷新首页 → restoreTab 局部反馈。
@@ -17700,6 +18305,17 @@ closeProductCard() {
         }
         if (tab === 'ai') this.bindSettingsAI(root);
         if (tab === 'tags') {
+            // v2.6.5 阶段3c：目录管理 3 子 tab（标签 / 品牌 / 途径）切换。
+            // 切换前先关掉挂在本弹窗上的确认弹窗，避免 restoreTab 后残留幽灵遮罩。
+            root.querySelectorAll('[data-settings-catalog-tab]').forEach(btn => {
+                btn.onclick = () => {
+                    const nextTab = btn.dataset.settingsCatalogTab;
+                    if (!nextTab || nextTab === this._settingsCatalogTab) return;
+                    this._closeScopedConfirm(root);
+                    this._settingsCatalogTab = nextTab;
+                    restoreTab();
+                };
+            });
             const create = root.querySelector('[data-action="settings-create-tag"]');
             if (create) create.onclick = async () => {
                 const input = root.querySelector('[name="settingsTagLabel"]');
@@ -17732,6 +18348,67 @@ closeProductCard() {
                             this.showToast('⚠️ ' + String(error && error.message || error));
                         }
                     });
+                };
+            });
+            // v2.6.5 阶段3c：品牌 / 途径子 tab —— 创建 / 删除（确认弹窗，文案区分维度）/
+            // swatch 换色，全部走阶段 2a 服务方法，成功后 restoreTab 刷新本区。
+            const dimensionCreateSpecs = [
+                ['settings-create-brand', 'settingsBrandLabel', options => this.createBrand(options)],
+                ['settings-create-channel', 'settingsChannelLabel', options => this.createChannel(options)],
+            ];
+            dimensionCreateSpecs.forEach(([action, inputName, createEntry]) => {
+                const button = root.querySelector(`[data-action="${action}"]`);
+                if (button) button.onclick = async () => {
+                    const input = root.querySelector(`[name="${inputName}"]`);
+                    try {
+                        await createEntry({ label: input ? input.value : '' });
+                        restoreTab();
+                    } catch (error) {
+                        this.showToast('⚠️ ' + String(error && error.message || error));
+                    }
+                };
+            });
+            root.querySelectorAll('[data-settings-entry-delete]').forEach(button => {
+                button.onclick = () => {
+                    const kind = button.dataset.entryKind === 'channels' ? 'channels' : 'brands';
+                    const entryId = button.dataset.settingsEntryDelete;
+                    const entry = kind === 'brands' ? this.getBrandById(entryId) : this.getChannelById(entryId);
+                    if (!entry) return;
+                    const isBrand = kind === 'brands';
+                    this._openScopedConfirm(root, {
+                        title: this._t(isBrand ? 'settingsDeleteBrandConfirmTitle' : 'settingsDeleteChannelConfirmTitle',
+                            isBrand ? '删除品牌' : '删除途径'),
+                        text: this._t(isBrand ? 'settingsDeleteBrandConfirmText' : 'settingsDeleteChannelConfirmText',
+                            isBrand ? '确定删除品牌「{label}」吗？此操作不可撤销。' : '确定删除途径「{label}」吗？此操作不可撤销。',
+                            { label: entry.label }),
+                        onConfirm: async () => {
+                            try {
+                                const deleted = isBrand ? await this.deleteBrand(entryId) : await this.deleteChannel(entryId);
+                                if (deleted) restoreTab();
+                            } catch (error) {
+                                this.showToast('⚠️ ' + String(error && error.message || error));
+                            }
+                        },
+                    });
+                };
+            });
+            root.querySelectorAll('[data-settings-entry-color]').forEach(button => {
+                button.onclick = () => {
+                    const kind = button.dataset.entryKind === 'channels' ? 'channels' : 'brands';
+                    const entryId = button.dataset.settingsEntryColor;
+                    const entry = kind === 'brands' ? this.getBrandById(entryId) : this.getChannelById(entryId);
+                    if (!entry) return;
+                    const isBrand = kind === 'brands';
+                    this._openTagColorPicker(entry, button, async (color) => {
+                        try {
+                            if (isBrand) await this.updateBrandColor(entryId, color);
+                            else await this.updateChannelColor(entryId, color);
+                            restoreTab();
+                        } catch (error) {
+                            this.showToast('⚠️ ' + String(error && error.message || error));
+                        }
+                    }, this._t(isBrand ? 'brandColorPickerTitle' : 'channelColorPickerTitle',
+                        isBrand ? '品牌颜色' : '途径颜色'));
                 };
             });
         }
@@ -17893,7 +18570,7 @@ closeProductCard() {
         const updatedAtText = this._formatExchangeRateUpdatedAt(ratesObj ? ratesObj.updatedAt : null);
         const exchangeRateAutoRefreshOn = this.settings.exchangeRateAutoRefresh !== false;
         const matrixColsPref = this.settings.matrixCols == null ? 'auto' : this.settings.matrixCols;
-        return `<div class="am-settings__section"><h3>${escapeHtml(this._t("defaultSort"))}</h3><p class="am-settings__hint">${escapeHtml(this._t("defaultSortHint"))}</p><select class="b3-select fn__block" name="defaultSort"> ${SORTS.map(s =>`<option value="${s.id}" ${this.settings.defaultSort === s.id ? "selected" : ""}>${escapeHtml(this._t(s.key))}</option>`).join("")} </select></div><div class="am-settings__section"><h3>${escapeHtml(this._t("defaultViewMode"))}</h3><div class="am-settings__radio-group" role="radiogroup" aria-label="${escapeHtml(this._t("defaultViewMode"))}"><label class="am-form__radio ${this.settings.defaultViewMode === "list" ? "am-form__radio--active" : ""}" data-default-view-option="list" role="radio" aria-checked="${this.settings.defaultViewMode === "list" ? "true" : "false"}" tabindex="${this.settings.defaultViewMode === "list" ? "0" : "-1"}"><input type="radio" name="defaultViewMode" value="list" ${this.settings.defaultViewMode === "list" ? "checked" : ""}/><span>${escapeHtml(this._t("viewModeList", "列表"))}</span></label><label class="am-form__radio ${this.settings.defaultViewMode === "matrix" ? "am-form__radio--active" : ""}" data-default-view-option="matrix" role="radio" aria-checked="${this.settings.defaultViewMode === "matrix" ? "true" : "false"}" tabindex="${this.settings.defaultViewMode === "matrix" ? "0" : "-1"}"><input type="radio" name="defaultViewMode" value="matrix" ${this.settings.defaultViewMode === "matrix" ? "checked" : ""}/><span>${escapeHtml(this._t("viewModeMatrix", "矩阵"))}</span></label></div></div><div class="am-settings__section"><h3>${escapeHtml(this._t("matrixColsSettingTitle", "矩阵视图列数"))}</h3><p class="am-settings__hint">${escapeHtml(this._t("matrixColsSettingHint", "「自动」会随面板宽度自适应列数；也可固定为 2 / 3 / 4 列。"))}</p><div class="am-settings__radio-group" role="radiogroup" aria-label="${escapeHtml(this._t("matrixColsSettingTitle", "矩阵视图列数"))}"> ${['auto', 2, 3, 4].map(opt => { const selected = String(matrixColsPref) === String(opt); return`<label class="am-form__radio${selected ? " am-form__radio--active" : ""}" data-matrix-cols-option="${opt}" role="radio" aria-checked="${selected ? "true" : "false"}"><input type="radio" name="matrixCols" value="${opt}" ${selected ? "checked" : ""}/><span>${escapeHtml(this._matrixColsButtonLabel(opt))}</span></label>`; }).join("")} </div></div><div class="am-settings__section am-exchange-rate-settings"><h3>${escapeHtml(this._t("exchangeRateSettingsTitle", "汇率设置"))}</h3><p class="am-settings__hint">${escapeHtml(this._t("exchangeRateSettingsHint", "自动获取美元、欧元、英镑兑人民币汇率，也可手动修正；手动设置后自动更新不再覆盖。"))}</p><label class="am-exchange-rate-settings__switch-row"><span class="am-exchange-rate-settings__switch-text"><span class="am-exchange-rate-settings__switch-title">${escapeHtml(this._t("exchangeRateAutoRefresh", "自动更新汇率"))}</span><span class="am-settings__hint am-exchange-rate-settings__switch-hint">${escapeHtml(this._t("exchangeRateAutoRefreshHint", "打开后，启动时若距上次更新超过 24 小时将自动获取最新汇率。"))}</span></span><input type="checkbox" name="exchangeRateAutoRefresh" ${exchangeRateAutoRefreshOn ? "checked" : ""}/></label><div class="am-exchange-rate-settings__status"><div class="am-exchange-rate-settings__status-head"><span class="am-exchange-rate-settings__status-title">${escapeHtml(this._t("exchangeRateCurrentTitle", "当前汇率"))}</span><span class="am-exchange-rate-settings__badge am-exchange-rate-settings__badge--${sourceBadge.cls}">${escapeHtml(sourceBadge.text)}</span></div><div class="am-exchange-rate-settings__status-row">${escapeHtml(this._t("exchangeRateUsdRow", "1 美元 = {value} 元", { value: rateDisplay('USD') }))}</div><div class="am-exchange-rate-settings__status-row">${escapeHtml(this._t("exchangeRateEurRow", "1 欧元 = {value} 元", { value: rateDisplay('EUR') }))}</div><div class="am-exchange-rate-settings__status-row">${escapeHtml(this._t("exchangeRateGbpRow", "1 英镑 = {value} 元", { value: rateDisplay('GBP') }))}</div><div class="am-exchange-rate-settings__status-time">${escapeHtml(updatedAtText ? this._t("exchangeRateUpdatedAt", "更新于 {time}", { time: updatedAtText }) : '—')}</div></div><div class="am-exchange-rate-settings__actions"><button type="button" class="b3-button am-exchange-rate-settings__refresh" data-action="exchange-rate-refresh">${escapeHtml(rateSource === 'manual' ? this._t("exchangeRateRestoreAuto", "恢复自动汇率") : this._t("exchangeRateRefreshNow", "立即刷新"))}</button></div><h4 class="am-exchange-rate-settings__manual-title">${escapeHtml(this._t("exchangeRateManualTitle", "手动修正"))}</h4><p class="am-settings__hint">${escapeHtml(this._t("exchangeRateManualAdjustHint", "填写后将覆盖自动汇率，且自动更新不再覆盖手动值；留空保持不变。"))}</p><label class="am-form__label am-exchange-rate-settings__label" for="am-exchange-rate-usd">${escapeHtml(this._t("exchangeRateUsdLabel", "1 美元 = ？人民币"))}</label><input id="am-exchange-rate-usd" class="b3-text-field am-exchange-rate-settings__input" type="number" inputmode="decimal" min="0" step="0.0001" name="exchangeRateUsdToCny" value="" placeholder="${escapeHtml(ratePlaceholder('USD'))}"/><label class="am-form__label am-exchange-rate-settings__label" for="am-exchange-rate-eur">${escapeHtml(this._t("exchangeRateEurLabel", "1 欧元 = ？人民币"))}</label><input id="am-exchange-rate-eur" class="b3-text-field am-exchange-rate-settings__input" type="number" inputmode="decimal" min="0" step="0.0001" name="exchangeRateEurToCny" value="" placeholder="${escapeHtml(ratePlaceholder('EUR'))}"/><label class="am-form__label am-exchange-rate-settings__label" for="am-exchange-rate-gbp">${escapeHtml(this._t("exchangeRateGbpLabel", "1 英镑 = ？人民币"))}</label><input id="am-exchange-rate-gbp" class="b3-text-field am-exchange-rate-settings__input" type="number" inputmode="decimal" min="0" step="0.0001" name="exchangeRateGbpToCny" value="" placeholder="${escapeHtml(ratePlaceholder('GBP'))}"/><div class="am-exchange-rate-settings__manual-actions"><button type="button" class="b3-button b3-button--primary am-exchange-rate-settings__save" data-action="exchange-rate-save">${escapeHtml(this._t("exchangeRateSave", "保存汇率"))}</button></div></div>`;
+        return `<div class="am-settings__section"><h3>${escapeHtml(this._t("defaultSort"))}</h3><p class="am-settings__hint">${escapeHtml(this._t("defaultSortHint"))}</p><select class="b3-select fn__block" name="defaultSort"> ${SORTS.map(s =>`<option value="${s.id}" ${this.settings.defaultSort === s.id ? "selected" : ""}>${escapeHtml(this._t(s.key))}</option>`).join("")} </select></div><div class="am-settings__section"><h3>${escapeHtml(this._t("defaultViewMode"))}</h3><div class="am-settings__radio-group" role="radiogroup" aria-label="${escapeHtml(this._t("defaultViewMode"))}"><label class="am-form__radio ${this.settings.defaultViewMode === "list" ? "am-form__radio--active" : ""}" data-default-view-option="list" role="radio" aria-checked="${this.settings.defaultViewMode === "list" ? "true" : "false"}" tabindex="${this.settings.defaultViewMode === "list" ? "0" : "-1"}"><input type="radio" name="defaultViewMode" value="list" ${this.settings.defaultViewMode === "list" ? "checked" : ""}/><span>${escapeHtml(this._t("viewModeList", "列表"))}</span></label><label class="am-form__radio ${this.settings.defaultViewMode === "matrix" ? "am-form__radio--active" : ""}" data-default-view-option="matrix" role="radio" aria-checked="${this.settings.defaultViewMode === "matrix" ? "true" : "false"}" tabindex="${this.settings.defaultViewMode === "matrix" ? "0" : "-1"}"><input type="radio" name="defaultViewMode" value="matrix" ${this.settings.defaultViewMode === "matrix" ? "checked" : ""}/><span>${escapeHtml(this._t("viewModeMatrix", "矩阵"))}</span></label></div></div><div class="am-settings__section"><h3>${escapeHtml(this._t("matrixColsSettingTitle", "矩阵视图列数"))}</h3><p class="am-settings__hint">${escapeHtml(this._t("matrixColsSettingHint", "「自动」会随面板宽度自适应列数；也可固定为 2 / 3 / 4 列。"))}</p><div class="am-settings__radio-group" role="radiogroup" aria-label="${escapeHtml(this._t("matrixColsSettingTitle", "矩阵视图列数"))}"> ${['auto', 2, 3, 4].map(opt => { const selected = String(matrixColsPref) === String(opt); return`<label class="am-form__radio${selected ? " am-form__radio--active" : ""}" data-matrix-cols-option="${opt}" role="radio" aria-checked="${selected ? "true" : "false"}"><input type="radio" name="matrixCols" value="${opt}" ${selected ? "checked" : ""}/><span>${escapeHtml(this._matrixColsButtonLabel(opt))}</span></label>`; }).join("")} </div></div><div class="am-settings__section"><h3>${escapeHtml(this._t("reportSectionsTitle", "报表显示"))}</h3><p class="am-settings__hint">${escapeHtml(this._t("reportSectionsHint", "控制报表页显示的排行与分析板块。"))}</p><label class="am-form__label"><input type="checkbox" name="reportShowTagRank" ${this.settings.reportShowTagRank !== false ? "checked" : ""}/> ${escapeHtml(this._t("reportShowTagRank", "标签排行"))}</label><label class="am-form__label"><input type="checkbox" name="reportShowBrandRank" ${this.settings.reportShowBrandRank !== false ? "checked" : ""}/> ${escapeHtml(this._t("reportShowBrandRank", "品牌排行"))}</label><label class="am-form__label"><input type="checkbox" name="reportShowChannelRank" ${this.settings.reportShowChannelRank !== false ? "checked" : ""}/> ${escapeHtml(this._t("reportShowChannelRank", "途径排行"))}</label></div><div class="am-settings__section am-exchange-rate-settings"><h3>${escapeHtml(this._t("exchangeRateSettingsTitle", "汇率设置"))}</h3><p class="am-settings__hint">${escapeHtml(this._t("exchangeRateSettingsHint", "自动获取美元、欧元、英镑兑人民币汇率，也可手动修正；手动设置后自动更新不再覆盖。"))}</p><label class="am-exchange-rate-settings__switch-row"><span class="am-exchange-rate-settings__switch-text"><span class="am-exchange-rate-settings__switch-title">${escapeHtml(this._t("exchangeRateAutoRefresh", "自动更新汇率"))}</span><span class="am-settings__hint am-exchange-rate-settings__switch-hint">${escapeHtml(this._t("exchangeRateAutoRefreshHint", "打开后，启动时若距上次更新超过 24 小时将自动获取最新汇率。"))}</span></span><input type="checkbox" name="exchangeRateAutoRefresh" ${exchangeRateAutoRefreshOn ? "checked" : ""}/></label><div class="am-exchange-rate-settings__status"><div class="am-exchange-rate-settings__status-head"><span class="am-exchange-rate-settings__status-title">${escapeHtml(this._t("exchangeRateCurrentTitle", "当前汇率"))}</span><span class="am-exchange-rate-settings__badge am-exchange-rate-settings__badge--${sourceBadge.cls}">${escapeHtml(sourceBadge.text)}</span></div><div class="am-exchange-rate-settings__status-row">${escapeHtml(this._t("exchangeRateUsdRow", "1 美元 = {value} 元", { value: rateDisplay('USD') }))}</div><div class="am-exchange-rate-settings__status-row">${escapeHtml(this._t("exchangeRateEurRow", "1 欧元 = {value} 元", { value: rateDisplay('EUR') }))}</div><div class="am-exchange-rate-settings__status-row">${escapeHtml(this._t("exchangeRateGbpRow", "1 英镑 = {value} 元", { value: rateDisplay('GBP') }))}</div><div class="am-exchange-rate-settings__status-time">${escapeHtml(updatedAtText ? this._t("exchangeRateUpdatedAt", "更新于 {time}", { time: updatedAtText }) : '—')}</div></div><div class="am-exchange-rate-settings__actions"><button type="button" class="b3-button am-exchange-rate-settings__refresh" data-action="exchange-rate-refresh">${escapeHtml(rateSource === 'manual' ? this._t("exchangeRateRestoreAuto", "恢复自动汇率") : this._t("exchangeRateRefreshNow", "立即刷新"))}</button></div><h4 class="am-exchange-rate-settings__manual-title">${escapeHtml(this._t("exchangeRateManualTitle", "手动修正"))}</h4><p class="am-settings__hint">${escapeHtml(this._t("exchangeRateManualAdjustHint", "填写后将覆盖自动汇率，且自动更新不再覆盖手动值；留空保持不变。"))}</p><label class="am-form__label am-exchange-rate-settings__label" for="am-exchange-rate-usd">${escapeHtml(this._t("exchangeRateUsdLabel", "1 美元 = ？人民币"))}</label><input id="am-exchange-rate-usd" class="b3-text-field am-exchange-rate-settings__input" type="number" inputmode="decimal" min="0" step="0.0001" name="exchangeRateUsdToCny" value="" placeholder="${escapeHtml(ratePlaceholder('USD'))}"/><label class="am-form__label am-exchange-rate-settings__label" for="am-exchange-rate-eur">${escapeHtml(this._t("exchangeRateEurLabel", "1 欧元 = ？人民币"))}</label><input id="am-exchange-rate-eur" class="b3-text-field am-exchange-rate-settings__input" type="number" inputmode="decimal" min="0" step="0.0001" name="exchangeRateEurToCny" value="" placeholder="${escapeHtml(ratePlaceholder('EUR'))}"/><label class="am-form__label am-exchange-rate-settings__label" for="am-exchange-rate-gbp">${escapeHtml(this._t("exchangeRateGbpLabel", "1 英镑 = ？人民币"))}</label><input id="am-exchange-rate-gbp" class="b3-text-field am-exchange-rate-settings__input" type="number" inputmode="decimal" min="0" step="0.0001" name="exchangeRateGbpToCny" value="" placeholder="${escapeHtml(ratePlaceholder('GBP'))}"/><div class="am-exchange-rate-settings__manual-actions"><button type="button" class="b3-button b3-button--primary am-exchange-rate-settings__save" data-action="exchange-rate-save">${escapeHtml(this._t("exchangeRateSave", "保存汇率"))}</button></div></div>`;
     }
 
     renderSettingsData() {
@@ -18267,18 +18944,55 @@ closeProductCard() {
         return `<div class="am-settings__section am-settings-logs"><h3>${escapeHtml(this._t('opLogTitle', '操作日志'))}</h3><p class="am-settings__hint">${escapeHtml(this._t('settingsLogsHint', '查看资产操作历史；可按资产名称搜索。日志为只读审计记录。'))}</p><button type="button" class="b3-button b3-button--primary am-settings-logs__action" data-open-formal-oplog>${escapeHtml(this._t('settingsLogsOpen', '查看操作日志'))}</button></div>`;
     }
 
+    /**
+     * v2.6.5 阶段3c：设置 Dialog「目录管理」——原标签管理 tab 扩展为顶部 3 子 tab：
+     * 标签 / 品牌 / 途径。三套目录完全复用行 UI 与交互（swatch 换色 + 引用计数 +
+     * 删除被引用 disabled），差异只在读写路径：
+     *   - 标签：_getAssetTagCatalog / _getTagReferenceCount / createTag / deleteTag / updateTag
+     *   - 品牌：_getDimensionDirectory('brands') / _getDimensionReferenceCount / createBrand / deleteBrand / updateBrandColor
+     *   - 途径：_getDimensionDirectory('channels') / _getDimensionReferenceCount / createChannel / deleteChannel / updateChannelColor
+     * 子 tab 态存实例字段 this._settingsCatalogTab（不持久化，默认 'tags'）；
+     * 标签子 tab 的 DOM 结构与 data 属性保持 v2.3.0 原样（既有测试选择器兼容）。
+     */
     renderSettingsTags() {
-        const tags = this._getAssetTagCatalog();
-        const rows = tags.length ? tags.map(tag => {
-            const refs = this._getTagReferenceCount(tag);
-            // v2.3.0 阶段 2b：行首颜色 swatch（有色=实心圆点，无色=虚线占位）
-            /* v2.3.0-hotfix：颜色写 CSS 变量而非按钮背景——34px 按钮只是触摸区，
-               颜色只由 ::after 18px 圆点呈现（用户反馈「颜色不要在圈外」）。 */
-            const swatchStyle = tag.color ? `style="--am-swatch-color:${escapeHtml(tag.color)}"` : '';
-            const swatchLabel = escapeHtml(this._t('tagColorSwatchLabel', '设置标签颜色'));
-            return `<div class="am-settings-tag-row"><button type="button" class="am-tag-color-swatch${tag.color ? '' : ' am-tag-color-swatch--empty'}" data-settings-tag-color="${escapeHtml(tag.id || '')}"${swatchStyle} title="${swatchLabel}" aria-label="${swatchLabel}"></button><span>${escapeHtml(tag.label)}</span><span class="am-settings-tag-row__count">${escapeHtml(this._t('tagReferenceCount', '{n} 项资产引用', { n: refs }))}</span><button class="b3-button b3-button--remove" data-settings-tag-delete="${escapeHtml(tag.id || '')}" ${refs ? 'disabled' : ''}>${escapeHtml(this._t('tagManagerDelete', '删除'))}</button></div>`;
-        }).join('') : `<div class="am-tag-manager-empty">${escapeHtml(this._t('tagManagerEmpty', '暂无标签'))}</div>`;
-        return `<div class="am-settings__section am-settings-tags"><h3>${escapeHtml(this._t('settingsTagsTitle', '标签管理'))}</h3><p class="am-settings__hint">${escapeHtml(this._t('settingsTagsHint', '管理固定标签目录。标签被引用时不可删除。'))}</p><div class="am-settings-tag-create"><input class="b3-text-field" type="text" name="settingsTagLabel" maxlength="20" placeholder="${escapeHtml(this._t('tagFieldLabel', '标签名'))}"/><button class="b3-button b3-button--primary" data-action="settings-create-tag">${escapeHtml(this._t('tagManagerAddBtn', '+ 新建标签'))}</button></div><div class="am-settings-tag-list">${rows}</div></div>`;
+        const catalogTab = this._settingsCatalogTab === 'brands' || this._settingsCatalogTab === 'channels' ? this._settingsCatalogTab : 'tags';
+        const rowHtml = (entry, kind) => {
+            const refs = kind === 'tags'
+                ? this._getTagReferenceCount(entry)
+                : this._getDimensionReferenceCount(kind, entry.id);
+            const swatchStyle = entry.color ? `style="--am-swatch-color:${escapeHtml(entry.color)}"` : '';
+            const swatchFallback = kind === 'tags' ? '设置标签颜色' : (kind === 'brands' ? '设置品牌颜色' : '设置途径颜色');
+            const swatchLabel = escapeHtml(this._t(kind === 'tags' ? 'tagColorSwatchLabel' : (kind === 'brands' ? 'brandColorSwatchLabel' : 'channelColorSwatchLabel'), swatchFallback));
+            const kindAttr = kind === 'tags' ? '' : `data-entry-kind="${kind}"`;
+            const colorAttr = kind === 'tags'
+                ? `data-settings-tag-color="${escapeHtml(entry.id || '')}"`
+                : `data-settings-entry-color="${escapeHtml(entry.id || '')}"`;
+            const deleteAttr = kind === 'tags'
+                ? `data-settings-tag-delete="${escapeHtml(entry.id || '')}"`
+                : `data-settings-entry-delete="${escapeHtml(entry.id || '')}"`;
+            return `<div class="am-settings-tag-row"><button type="button" class="am-tag-color-swatch${entry.color ? '' : ' am-tag-color-swatch--empty'}"${colorAttr}${kindAttr}${swatchStyle} title="${swatchLabel}" aria-label="${swatchLabel}"></button><span>${escapeHtml(entry.label)}</span><span class="am-settings-tag-row__count">${escapeHtml(this._t('tagReferenceCount', '{n} 项资产引用', { n: refs }))}</span><button class="b3-button b3-button--remove"${deleteAttr}${kindAttr} ${refs ? 'disabled' : ''}>${escapeHtml(this._t('tagManagerDelete', '删除'))}</button></div>`;
+        };
+        const tabDefs = [
+            ['tags', 'settingsCatalogTabTags', '标签'],
+            ['brands', 'settingsCatalogTabBrands', '品牌'],
+            ['channels', 'settingsCatalogTabChannels', '途径'],
+        ];
+        const catalogTabsHtml = `<div class="am-settings-catalog-tabs" role="tablist">${tabDefs.map(([key, i18nKey, fallback]) =>`<button type="button" role="tab" aria-selected="${key === catalogTab ? 'true' : 'false'}" class="am-settings-catalog-tab${key === catalogTab ? ' is-active' : ''}" data-settings-catalog-tab="${key}">${escapeHtml(this._t(i18nKey, fallback))}</button>`).join('')}</div>`;
+        let bodyHtml = '';
+        if (catalogTab === 'tags') {
+            const tags = this._getAssetTagCatalog();
+            const rows = tags.length ? tags.map(tag => rowHtml(tag, 'tags')).join('') : `<div class="am-tag-manager-empty">${escapeHtml(this._t('tagManagerEmpty', '暂无标签'))}</div>`;
+            bodyHtml = `<h3>${escapeHtml(this._t('settingsTagsTitle', '标签管理'))}</h3><p class="am-settings__hint">${escapeHtml(this._t('settingsTagsHint', '管理固定标签目录。标签被引用时不可删除。'))}</p><div class="am-settings-tag-create"><input class="b3-text-field" type="text" name="settingsTagLabel" maxlength="20" placeholder="${escapeHtml(this._t('tagFieldLabel', '标签名'))}"/><button class="b3-button b3-button--primary" data-action="settings-create-tag">${escapeHtml(this._t('tagManagerAddBtn', '+ 新建标签'))}</button></div><div class="am-settings-tag-list">${rows}</div>`;
+        } else if (catalogTab === 'brands') {
+            const brands = this._getDimensionDirectory('brands');
+            const rows = brands.length ? brands.map(entry => rowHtml(entry, 'brands')).join('') : `<div class="am-tag-manager-empty">${escapeHtml(this._t('brandManagerEmpty', '暂无品牌'))}</div>`;
+            bodyHtml = `<h3>${escapeHtml(this._t('settingsBrandsTitle', '品牌管理'))}</h3><p class="am-settings__hint">${escapeHtml(this._t('settingsCatalogHintBrands', '管理品牌目录。品牌被引用时不可删除。'))}</p><div class="am-settings-tag-create"><input class="b3-text-field" type="text" name="settingsBrandLabel" maxlength="20" placeholder="${escapeHtml(this._t('brandFieldLabel', '品牌名'))}"/><button class="b3-button b3-button--primary" data-action="settings-create-brand">${escapeHtml(this._t('settingsCreateBrandBtn', '+ 新建品牌'))}</button></div><div class="am-settings-tag-list">${rows}</div>`;
+        } else {
+            const channels = this._getDimensionDirectory('channels');
+            const rows = channels.length ? channels.map(entry => rowHtml(entry, 'channels')).join('') : `<div class="am-tag-manager-empty">${escapeHtml(this._t('channelManagerEmpty', '暂无途径'))}</div>`;
+            bodyHtml = `<h3>${escapeHtml(this._t('settingsChannelsTitle', '途径管理'))}</h3><p class="am-settings__hint">${escapeHtml(this._t('settingsCatalogHintChannels', '管理入手途径目录。途径被引用时不可删除。'))}</p><div class="am-settings-tag-create"><input class="b3-text-field" type="text" name="settingsChannelLabel" maxlength="20" placeholder="${escapeHtml(this._t('channelFieldLabel', '入手途径名'))}"/><button class="b3-button b3-button--primary" data-action="settings-create-channel">${escapeHtml(this._t('settingsCreateChannelBtn', '+ 新建途径'))}</button></div><div class="am-settings-tag-list">${rows}</div>`;
+        }
+        return `<div class="am-settings__section am-settings-tags">${catalogTabsHtml}${bodyHtml}</div>`;
     }
 
     /**
@@ -19087,7 +19801,7 @@ closeProductCard() {
             if (mode === 'replace') nextIds = selected.slice();
             else if (mode === 'remove') nextIds = currentIds.filter(tagId => selected.indexOf(tagId) < 0);
             else nextIds = currentIds.concat(selected.filter(tagId => currentIds.indexOf(tagId) < 0));
-            if (nextIds.length > 3) throw this._agentTagError('TAG_LIMIT_EXCEEDED', 'an asset can have at most three tags');
+            if (nextIds.length > 32) throw this._agentTagError('TAG_LIMIT_EXCEEDED', 'an asset can have at most 32 tags');
             if (JSON.stringify(nextIds) === JSON.stringify(currentIds)) return { noop: true, context: { asset: asset } };
             const updated = mergeFormalV2AssetPatch(asset, { tagIds: nextIds }, { now: new Date().toISOString(), today: todayISO() });
             return { assets: snapshot.assets.map(item => item.id === id ? updated : item), context: { asset: updated } };
@@ -19123,7 +19837,7 @@ closeProductCard() {
             const nextIds = mode === 'replace'
                 ? selected.slice()
                 : currentIds.concat(selected.filter(tagId => currentIds.indexOf(tagId) < 0));
-            if (nextIds.length > 3) throw this._agentTagError('TAG_LIMIT_EXCEEDED', 'an asset can have at most three tags');
+            if (nextIds.length > 32) throw this._agentTagError('TAG_LIMIT_EXCEEDED', 'an asset can have at most 32 tags');
             if (!createdTags.length && JSON.stringify(nextIds) === JSON.stringify(currentIds)) return { noop: true, context: { asset: asset, tags: tags } };
             const updated = JSON.stringify(nextIds) === JSON.stringify(currentIds)
                 ? asset
@@ -20025,7 +20739,27 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
                 if (_isUuidNorm(s)) return s.toLowerCase();
                 const byLabel = _tagCatalogNorm.find(t => t.label.toLowerCase() === s.toLowerCase());
                 return byLabel ? byLabel.id : null;
-            }).filter(Boolean).slice(0, 3);
+            }).filter(Boolean);
+            /* v2.6.5 阶段2a：标签上限放开（目录上限由存储层统一约束），不做 UI 截断 */
+            /* v2.6.5 阶段2a：品牌 / 入手途径初始选中（单选，UUID 归一小写；空 = 未设置） */
+            const selectedBrandId = _isUuidNorm(asset.brandId) ? String(asset.brandId).trim().toLowerCase() : '';
+            const selectedChannelId = _isUuidNorm(asset.channelId) ? String(asset.channelId).trim().toLowerCase() : '';
+            const dimensionKindMeta = [
+                { key: 'brand', directoryKey: 'brands', field: 'formFieldBrand', fieldText: '品牌', title: 'formBrandPickerTitle', titleText: '选择品牌', selected: selectedBrandId },
+                { key: 'channel', directoryKey: 'channels', field: 'formFieldChannel', fieldText: '入手途径', title: 'formChannelPickerTitle', titleText: '选择入手途径', selected: selectedChannelId },
+            ];
+            const dimensionSectionHtml = `<section class="am-form-section am-formal-dimensions"><div class="am-form-section__title">${escapeHtml(this._t('formDimensionsSection', '品牌 / 入手途径'))}</div>` + dimensionKindMeta.map(meta => {
+                const catalog = this._getDimensionDirectory(meta.directoryKey);
+                const summary = meta.selected ? (() => { const hit = catalog.find(entry => entry.id === meta.selected); return hit ? hit.label : ''; })() : '';
+                const optionsHtml = catalog.length === 0
+                    ? `<div class="am-tag-popover__empty">${escapeHtml(this._t('formDimensionEmpty', '暂无可选'))}</div>`
+                    : catalog.map(entry => {
+                        const active = meta.selected === entry.id;
+                        const swatch = entry.color ? `<span class="am-tag-popover__option-color" style="background:${escapeHtml(entry.color)}"></span>` : '';
+                        return `<button type="button" class="am-tag-popover__option" data-dimension-pick="${escapeHtml(entry.id)}" aria-pressed="${active}">${swatch}<span>${escapeHtml(entry.label)}</span></button>`;
+                    }).join('');
+                return `<div class="am-tag-popover" data-dimension-popover="${meta.key}"><div class="am-tag-popover__row"><span class="am-tag-popover__label">${escapeHtml(this._t(meta.field, meta.fieldText))}</span><button type="button" class="am-tag-popover__trigger" data-dimension-popover-trigger><span data-dimension-popover-summary>${escapeHtml(summary)}</span><span class="am-tag-popover__trigger-chevron">▼</span></button></div><div class="am-tag-popover__panel" data-dimension-popover-panel hidden><div class="am-tag-popover__title">${escapeHtml(this._t(meta.title, meta.titleText))}</div><div class="am-tag-popover__options"> ${optionsHtml} </div><div class="am-tag-popover__new"><input type="text" class="am-tag-popover__new-input" data-dimension-new maxlength="20" placeholder="${escapeHtml(this._t('formDimensionNewPlaceholder', '输入名称，回车新建'))}"><button type="button" class="am-tag-popover__new-add" data-dimension-new-add aria-label="${escapeHtml(this._t('formDimensionNewAdd', '+ 新建'))}">+</button></div><button type="button" class="am-tag-popover__close" data-dimension-popover-close>${escapeHtml(this._t('formTagPickerClose', '关闭'))}</button></div></div>`;
+            }).join('') + `</section>`;
             const familyClass = currentKind === 'physical' ? ' am-physical-sheet' : (currentKind.indexOf('virtual') === 0 ? ' am-virtual-sheet' : (currentKind.indexOf('prepaid') === 0 ? ' am-prepaid-sheet' : (opts.wishlist ? ' am-wishlist-sheet' : '')));
             const currencySymbol = c => c === 'USD' ? '$' : c === 'EUR' ? '€' : c === 'GBP' ? '£' : '¥';
             const costDateLabel = currentKind === 'virtualSubscription' ? this._t('formFieldStartDate', '开始日期') : (currentKind.indexOf('prepaid') === 0 ? this._t('formFieldAcquiredOn', '开通日期') : this._t('formFieldPurchaseDate', '购买日期'));
@@ -20195,7 +20929,7 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
             const virtualKindBodyHtml = isVirtualKind
                 ? `<div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(virtualPriceLabel)}</span><span class="am-fpc1-row__value am-virtual-price-cell">${this._renderGlassSelectCell('currency', asset.currency || 'CNY', this._glassCurrencyOptions(asset.currency || 'CNY'), { disabled: !!(existing || wishCurrencyLocked) })}<input class="am-form-row__amount" name="amount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" value="${escapeHtml(virtualPriceValue)}"></span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('productDetailType', '类型'))}</span><span class="am-type-pill-row am-type-pill-row--inline" data-type-pill-row><button type="button" class="am-type-pill${switchKindDisabledClass}" data-switch-kind="virtualSubscription" aria-pressed="${currentKind === 'virtualSubscription'}"${switchKindLockedTitle}${switchKindDisabledAttr}>${escapeHtml(this._t('formTypeSubscription', '订阅'))}</button><button type="button" class="am-type-pill${switchKindDisabledClass}" data-switch-kind="virtualPerpetual" aria-pressed="${currentKind === 'virtualPerpetual'}"${switchKindLockedTitle}${switchKindDisabledAttr}>${escapeHtml(this._t('formTypePerpetual', '买断'))}</button></span></div></div></div>`
                 + (isSubKind
-                    ? `<div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldStartDate', '开始日期'))}</span><span class="am-fpc1-row__value am-fpc1-row__value--date am-datepicker-cell" data-am-datepicker="acquiredOn" data-am-shortcuts="today"><input type="hidden" name="acquiredOn" value="${escapeHtml(asset.acquiredOn || todayISO())}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(asset.acquiredOn || this._t('datePickerPlaceholder', '选择日期'))}</button></span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formalBillingCycle', '账单周期'))}</span><span class="am-fpc1-row__value am-virtual-inline-select">${this._renderGlassSelectCell('formalPlanCycle', virtualCycle, this._glassCycleOptions())}</span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('productDetailExpiryDate', '到期日'))}</span>${virtualExpiryFieldHtml}</div></div></div>`
+                    ? `<div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldStartDate', '开始日期'))}</span><span class="am-fpc1-row__value am-fpc1-row__value--date am-datepicker-cell" data-am-datepicker="acquiredOn" data-am-shortcuts="today"><input type="hidden" name="acquiredOn" value="${escapeHtml(asset.acquiredOn || todayISO())}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(asset.acquiredOn || this._t('datePickerPlaceholder', '选择日期'))}</button></span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formalBillingCycle', '账单周期'))}${this._requiredDotHtml()}</span><span class="am-fpc1-row__value am-virtual-inline-select">${this._renderGlassSelectCell('formalPlanCycle', virtualCycle, this._glassCycleOptions())}</span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('productDetailExpiryDate', '到期日'))}</span>${virtualExpiryFieldHtml}</div></div></div>`
                     : `<div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldPurchaseDate', '购买日期'))}</span><span class="am-fpc1-row__value am-fpc1-row__value--date am-datepicker-cell" data-am-datepicker="acquiredOn" data-am-shortcuts="today"><input type="hidden" name="acquiredOn" value="${escapeHtml(asset.acquiredOn || todayISO())}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(asset.acquiredOn || this._t('datePickerPlaceholder', '选择日期'))}</button></span></div></div></div>`)
                 + (isSubKind
                     ? `<div class="am-form-card"><div class="am-form-row am-form-row--toggle am-form-card__head"><span class="am-form-row__label">${escapeHtml(this._t('formFieldAutoRenew', '自动续费'))}</span><label class="am-form-toggle"><input type="checkbox" name="autoRenew" ${virtualAutoRenew ? 'checked' : ''}><span class="am-form-toggle__track"><span class="am-form-toggle__thumb"></span></span></label></div></div><div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldAccount', '账号'))}</span><input class="am-fpc1-row__value" type="text" name="accountLabel" value="${escapeHtml(virtualAccountLabel)}"></div></div></div>`
@@ -20224,8 +20958,10 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
                 const coverPreview = this.renderAssetCoverContent(coverAsset, '📦', 'am-formal-cover-picker__preview-image', 'am-formal-cover-picker__preview-fallback');
                 const tagSummary = selectedTagIds.length === 0 ? '' : selectedTagIds.map(id => { const t = this._getAssetTagCatalog().find(x => x.id === id); return t ? t.label : ''; }).filter(Boolean).join('、');
                 const tagPickerOptionsHtml = this._getAssetTagCatalog().length === 0 ? `<div class="am-tag-popover__empty">${escapeHtml(this._t('formTagPickerEmpty', '暂无可选标签'))}</div>` : this._getAssetTagCatalog().map(tag => { const active = selectedTagIds.indexOf(tag.id) >= 0; const swatch = tag.color ? `<span class="am-tag-popover__option-color" style="background:${escapeHtml(tag.color)}"></span>` : ''; return `<button type="button" class="am-tag-popover__option" data-tag-pick="${escapeHtml(tag.id)}" aria-pressed="${active}">${swatch}<span>${escapeHtml(tag.label)}</span></button>`; }).join('');
-                mask.innerHTML = `<div class="am-edit-sheet am-form-shell${familyClass}"><div class="am-edit-sheet__grabber"></div><header class="am-edit-sheet__header am-form-shell__header"><button type="button" class="am-edit-sheet__close" data-close aria-label="${escapeHtml(this._t('btnClose', '关闭'))}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button><h2 class="am-edit-sheet__title">${escapeHtml(existing ? this._t("formEditTitle", "编辑资产") : (currentKind === 'physical' ? this._t("formAddTitle", "添加资产") : (currentKind.indexOf('prepaid') === 0 ? this._t('formAddPrepaid', '添加资产预付权益') : this._formalKindLabel(currentKind))))}</h2><span class="am-form-shell__header-spacer"></span></header><form id="${formAssetId}" data-form data-selected-tag-ids="${escapeHtml(selectedTagIds.join(','))}"><section class="am-form-basic-card am-form-basic-card--name-only"><button type="button" class="am-form-basic-card__cover" data-formal-cover-toggle><span class="am-form-basic-card__cover-image" data-formal-cover-target>${coverPreview}</span><span class="am-form-basic-card__cover-edit">+</span></button><div class="am-form-basic-card__fields"><div class="am-form-basic-card__name"><div class="am-form-basic-card__name-label">${escapeHtml(this._t(currentKind === 'physical' ? 'formNameLabel' : 'formNamePlaceholder', currentKind === 'physical' ? '资产名称' : '名称'))}</div><div class="am-name-field"><input type="text" class="am-name-field__input" name="name" required value="${escapeHtml(asset.name || '')}" placeholder="${escapeHtml(this._t(currentKind === 'physical' ? 'formNameLabel' : 'formNamePlaceholder', currentKind === 'physical' ? '资产名称' : '名称'))}"></div></div></div><div data-cover-picker-slot></div>${physicalCard1Rows}</section><div data-kind-body>${kindBodyHtml}</div><section class="am-form-section am-formal-tags"><div class="am-form-section__title">${escapeHtml(this._t('formFieldTag', '标签'))}</div><div class="am-tag-popover" data-tag-popover><div class="am-tag-popover__row"><span class="am-tag-popover__label">${escapeHtml(this._t('formFieldTag', '标签'))}</span><button type="button" class="am-tag-popover__trigger" data-tag-popover-trigger><span data-tag-popover-summary>${escapeHtml(tagSummary)}</span><span class="am-tag-popover__trigger-chevron">▼</span></button></div><div class="am-tag-popover__panel" data-tag-popover-panel hidden><div class="am-tag-popover__title">${escapeHtml(this._t('formTagPickerTitle', '选择标签（最多 3 个）'))}</div><div class="am-tag-popover__options"> ${tagPickerOptionsHtml} </div><div class="am-tag-popover__new"><input type="text" class="am-tag-popover__new-input" data-tag-new maxlength="20" placeholder="${escapeHtml(this._t('formTagNewPlaceholder', '新建标签，回车添加'))}"><button type="button" class="am-tag-popover__new-add" data-tag-new-add aria-label="${escapeHtml(this._t('formTagNewAdd', '+ 新建'))}">+</button></div><button type="button" class="am-tag-popover__close" data-tag-popover-close>${escapeHtml(this._t('formTagPickerClose', '关闭'))}</button></div></div></section><section class="am-form-section am-form-notes-section"><div class="am-form-section__title">${escapeHtml(this._t('formFieldNotes', '备注'))}</div><div class="am-form-textarea"><textarea class="am-form-textarea__field" name="notes" placeholder="${escapeHtml(this._t('formFieldNotes', '备注'))}">${escapeHtml(asset.notes || '')}</textarea></div></section></form><footer class="am-form-shell__footer"><button type="submit" form="${formAssetId}" class="am-form-shell__save" data-save>${escapeHtml(this._t('btnSave', '保存'))}<span class="am-form-shell__save-spinner"></span></button></footer></div>`;
+                mask.innerHTML = `<div class="am-edit-sheet am-form-shell${familyClass}"><div class="am-edit-sheet__grabber"></div><header class="am-edit-sheet__header am-form-shell__header"><button type="button" class="am-edit-sheet__close" data-close aria-label="${escapeHtml(this._t('btnClose', '关闭'))}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button><h2 class="am-edit-sheet__title">${escapeHtml(existing ? this._t("formEditTitle", "编辑资产") : (currentKind === 'physical' ? this._t("formAddTitle", "添加资产") : (currentKind.indexOf('prepaid') === 0 ? this._t('formAddPrepaid', '添加资产预付权益') : this._formalKindLabel(currentKind))))}</h2><span class="am-form-shell__header-spacer"></span></header><form id="${formAssetId}" data-form data-selected-tag-ids="${escapeHtml(selectedTagIds.join(','))}" data-selected-brand-id="${escapeHtml(selectedBrandId)}" data-selected-channel-id="${escapeHtml(selectedChannelId)}"><section class="am-form-basic-card am-form-basic-card--name-only"><button type="button" class="am-form-basic-card__cover" data-formal-cover-toggle><span class="am-form-basic-card__cover-image" data-formal-cover-target>${coverPreview}</span><span class="am-form-basic-card__cover-edit">+</span></button><div class="am-form-basic-card__fields"><div class="am-form-basic-card__name"><div class="am-form-basic-card__name-label">${escapeHtml(this._t(currentKind === 'physical' ? 'formNameLabel' : 'formNamePlaceholder', currentKind === 'physical' ? '资产名称' : '名称'))}${this._requiredDotHtml()}</div><div class="am-name-field"><input type="text" class="am-name-field__input" name="name" required value="${escapeHtml(asset.name || '')}" placeholder="${escapeHtml(this._t(currentKind === 'physical' ? 'formNameLabel' : 'formNamePlaceholder', currentKind === 'physical' ? '资产名称' : '名称'))}"></div></div></div><div data-cover-picker-slot></div>${physicalCard1Rows}</section><div data-kind-body>${kindBodyHtml}</div>${dimensionSectionHtml}<section class="am-form-section am-formal-tags"><div class="am-form-section__title">${escapeHtml(this._t('formFieldTag', '标签'))}</div><div class="am-tag-popover" data-tag-popover><div class="am-tag-popover__row"><span class="am-tag-popover__label">${escapeHtml(this._t('formFieldTag', '标签'))}</span><button type="button" class="am-tag-popover__trigger" data-tag-popover-trigger><span data-tag-popover-summary>${escapeHtml(tagSummary)}</span><span class="am-tag-popover__trigger-chevron">▼</span></button></div><div class="am-tag-popover__panel" data-tag-popover-panel hidden><div class="am-tag-popover__title">${escapeHtml(this._t('formTagPickerTitle', '选择标签'))}</div><div class="am-tag-popover__options"> ${tagPickerOptionsHtml} </div><div class="am-tag-popover__new"><input type="text" class="am-tag-popover__new-input" data-tag-new maxlength="20" placeholder="${escapeHtml(this._t('formTagNewPlaceholder', '新建标签，回车添加'))}"><button type="button" class="am-tag-popover__new-add" data-tag-new-add aria-label="${escapeHtml(this._t('formTagNewAdd', '+ 新建'))}">+</button></div><button type="button" class="am-tag-popover__close" data-tag-popover-close>${escapeHtml(this._t('formTagPickerClose', '关闭'))}</button></div></div></section><section class="am-form-section am-form-notes-section"><div class="am-form-section__title">${escapeHtml(this._t('formFieldNotes', '备注'))}</div><div class="am-form-textarea"><textarea class="am-form-textarea__field" name="notes" placeholder="${escapeHtml(this._t('formFieldNotes', '备注'))}">${escapeHtml(asset.notes || '')}</textarea></div></section></form><footer class="am-form-shell__footer"><button type="submit" form="${formAssetId}" class="am-form-shell__save" data-save>${escapeHtml(this._t('btnSave', '保存'))}<span class="am-form-shell__save-spinner"></span></button></footer></div>`;
                 const pendingTags = new Map();
+                /* v2.6.5 阶段2a：品牌 / 入手途径 pending 新建条目（tempId → label），保存时 resolve */
+                const pendingDimensions = { brand: new Map(), channel: new Map() };
                 mask.querySelector('[data-close]').onclick = () => { void discardPendingCover(); mask.remove(); };
                 const coverToggle = mask.querySelector('[data-formal-cover-toggle]');
                 if (coverToggle) coverToggle.onclick = () => { coverState.pickerOpen = !coverState.pickerOpen; updateCoverPicker(); };
@@ -20252,12 +20988,11 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
                         const exist = _apCatalog.find(t => t.label.toLowerCase() === label.toLowerCase());
                         let next = (form.dataset.selectedTagIds || '').split(',').filter(Boolean);
                         if (exist) {
-                            if (next.indexOf(exist.id) < 0) { if (next.length >= 3) { this.showToast('⚠️ ' + this._t('formalTagIdsInvalid', '标签必须是最多 3 个有效 UUID')); return; } next.push(exist.id); }
+                            if (next.indexOf(exist.id) < 0) next.push(exist.id);
                             setSelectedTagIds(next);
                             return;
                         }
                         const tempId = createStableId();
-                        if (next.length >= 3) { this.showToast('⚠️ ' + this._t('formalTagIdsInvalid', '标签必须是最多 3 个有效 UUID')); return; }
                         pendingTags.set(tempId, label);
                         next.push(tempId);
                         const opt = document.createElement('button');
@@ -20279,8 +21014,7 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
                         const id = button.dataset.tagPick;
                         let next = (form.dataset.selectedTagIds || '').split(',').filter(Boolean);
                         if (next.indexOf(id) >= 0) next = next.filter(x => x !== id);
-                        else if (next.length < 3) next.push(id);
-                        else { this.showToast('⚠️ ' + this._t('formalTagIdsInvalid', '标签必须是最多 3 个有效 UUID')); return; }
+                        else next.push(id);
                         setSelectedTagIds(next);
                         /* summary + aria-pressed are refreshed by setSelectedTagIds() */
                         /* legacy inline summary replaced by computeTagSummary (supports pending tags) */
@@ -20294,6 +21028,66 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
                     if (newAdd) newAdd.onclick = event => { event.preventDefault(); event.stopPropagation(); commitNew(); };
                     if (newInput) newInput.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); commitNew(); } });
                 }
+                /* v2.6.5 阶段2a：品牌 / 入手途径单选 popover 绑定（结构复用标签 popover）。
+                 * 选中状态写 form 的 data-selected-brand-id / data-selected-channel-id；
+                 * 点选项=选中、再点=取消（隐式"未设置"）；底部输入框回车/加号 → pending 新建。 */
+                mask.querySelectorAll('[data-dimension-popover]').forEach(dimensionRoot => {
+                    const dimensionKey = dimensionRoot.getAttribute('data-dimension-popover');
+                    const dimensionDirectoryKey = dimensionKey === 'brand' ? 'brands' : 'channels';
+                    const dimensionAttr = dimensionKey === 'brand' ? 'data-selected-brand-id' : 'data-selected-channel-id';
+                    const dimensionPending = pendingDimensions[dimensionKey];
+                    const dimensionForm = mask.querySelector('form');
+                    const dimensionTrigger = dimensionRoot.querySelector('[data-dimension-popover-trigger]');
+                    const dimensionPanel = dimensionRoot.querySelector('[data-dimension-popover-panel]');
+                    const dimensionSummary = dimensionRoot.querySelector('[data-dimension-popover-summary]');
+                    const dimensionDirectory = () => this._getDimensionDirectory(dimensionDirectoryKey);
+                    const computeDimensionSummary = () => {
+                        const id = dimensionForm.getAttribute(dimensionAttr);
+                        if (!id) return '';
+                        const pendingLabel = dimensionPending.get(id);
+                        if (pendingLabel) return pendingLabel;
+                        const hit = dimensionDirectory().find(entry => entry.id === id);
+                        return hit ? hit.label : '';
+                    };
+                    const setSelectedDimension = next => {
+                        dimensionForm.setAttribute(dimensionAttr, next || '');
+                        dimensionSummary.textContent = computeDimensionSummary();
+                        dimensionRoot.querySelectorAll('[data-dimension-pick]').forEach(b => b.setAttribute('aria-pressed', String(b.getAttribute('data-dimension-pick') === next)));
+                    };
+                    const addPendingDimension = rawLabel => {
+                        const label = String(rawLabel || '').trim().slice(0, 20);
+                        if (!label) return;
+                        const exist = dimensionDirectory().find(entry => entry.label.toLowerCase() === label.toLowerCase());
+                        if (exist) { setSelectedDimension(exist.id); return; }
+                        const tempId = createStableId();
+                        dimensionPending.set(tempId, label);
+                        const opt = document.createElement('button');
+                        opt.type = 'button';
+                        opt.className = 'am-tag-popover__option am-tag-popover__option--pending';
+                        opt.setAttribute('data-dimension-pick', tempId);
+                        opt.setAttribute('aria-pressed', 'true');
+                        opt.innerHTML = '<span class="am-tag-popover__option-color" style="background:#3575f3"></span><span>🆕 ' + escapeHtml(label) + '</span>';
+                        opt.onclick = () => { if (dimensionForm.getAttribute(dimensionAttr) === tempId) { dimensionPending.delete(tempId); if (opt.parentNode) opt.parentNode.removeChild(opt); setSelectedDimension(''); } };
+                        const optsBox = dimensionPanel.querySelector('.am-tag-popover__options');
+                        if (optsBox) optsBox.appendChild(opt);
+                        setSelectedDimension(tempId);
+                    };
+                    dimensionTrigger.onclick = event => { event.preventDefault(); dimensionPanel.hidden = false; };
+                    dimensionTrigger.addEventListener('mousedown', event => event.stopPropagation());
+                    dimensionPanel.addEventListener('mousedown', event => event.stopPropagation());
+                    dimensionRoot.addEventListener('mousedown', event => event.stopPropagation());
+                    dimensionRoot.querySelectorAll('[data-dimension-pick]').forEach(button => { button.onclick = () => {
+                        const id = button.getAttribute('data-dimension-pick');
+                        setSelectedDimension(dimensionForm.getAttribute(dimensionAttr) === id ? '' : id);
+                    }; });
+                    const dimensionClose = dimensionRoot.querySelector('[data-dimension-popover-close]');
+                    if (dimensionClose) dimensionClose.onclick = () => { dimensionPanel.hidden = true; };
+                    const dimensionNewInput = dimensionPanel.querySelector('[data-dimension-new]');
+                    const dimensionNewAdd = dimensionPanel.querySelector('[data-dimension-new-add]');
+                    const commitDimensionNew = () => { if (dimensionNewInput) { addPendingDimension(dimensionNewInput.value); dimensionNewInput.value = ''; } };
+                    if (dimensionNewAdd) dimensionNewAdd.onclick = event => { event.preventDefault(); event.stopPropagation(); commitDimensionNew(); };
+                    if (dimensionNewInput) dimensionNewInput.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); commitDimensionNew(); } });
+                });
                 const formElement = mask.querySelector('form');
                 // Disable browser constraint bubbles; validation is rendered by the plugin.
                 formElement.noValidate = true;
@@ -20337,8 +21131,37 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
                                 if (_byLabel && _resolvedTagIds.indexOf(_byLabel.id) < 0) _resolvedTagIds.push(_byLabel.id);
                             }
                         }
-                        if (_resolvedTagIds.length > 3) throw new Error(this._t('formalTagIdsInvalid', '标签必须是最多 3 个有效 UUID'));
                         const tagIds = _resolvedTagIds;
+                        /* v2.6.5 阶段2a：品牌 / 入手途径 resolve —— pending 名称保存时落真实目录条目
+                         * （不存在则 createBrand/createChannel），resolve 失败中止保存并 toast。
+                         * 空值 / UUID 走同步快路径（不引入 microtask，保持与旧提交时序一致）。 */
+                        const _resolveDimensionRef = (dimensionKey, directoryKey, createEntry) => {
+                            const dimensionAttr = dimensionKey === 'brand' ? 'data-selected-brand-id' : 'data-selected-channel-id';
+                            const dimensionRaw = (form.getAttribute(dimensionAttr) || '').trim();
+                            if (!dimensionRaw) return null;
+                            if (_isUuidSave(dimensionRaw)) return dimensionRaw.toLowerCase();
+                            const dimensionLabel = String(pendingDimensions[dimensionKey].get(dimensionRaw) || '').trim();
+                            if (!dimensionLabel) return null;
+                            return (async () => {
+                                const _findByLabel = () => this._getDimensionDirectory(directoryKey).find(entry => entry.label.toLowerCase() === dimensionLabel.toLowerCase());
+                                let _real = _findByLabel();
+                                if (!_real) {
+                                    try { _real = await createEntry({ label: dimensionLabel }); }
+                                    catch (_e) {
+                                        _real = _findByLabel();
+                                        if (!_real) {
+                                            this.showToast('⚠️ ' + this._t(dimensionKey === 'brand' ? 'brandSaveFailed' : 'channelSaveFailed', dimensionKey === 'brand' ? '品牌保存失败' : '入手途径保存失败'));
+                                            throw _e;
+                                        }
+                                    }
+                                }
+                                return _real.id;
+                            })();
+                        };
+                        const _brandRef = _resolveDimensionRef('brand', 'brands', options => this.createBrand(options));
+                        const brandId = (_brandRef && typeof _brandRef.then === 'function') ? await _brandRef : _brandRef;
+                        const _channelRef = _resolveDimensionRef('channel', 'channels', options => this.createChannel(options));
+                        const channelId = (_channelRef && typeof _channelRef.then === 'function') ? await _channelRef : _channelRef;
                         const value = name => form.elements[name] ? form.elements[name].value : '';
                         const checked = name => !!(form.elements[name] && form.elements[name].checked);
                         const optionalMinor = name => value(name) === '' ? null : parseMajorToMinor(value(name), currency);
@@ -20376,7 +21199,7 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
                                 : activeKind === 'virtualPerpetual'
                                     ? { licenseAccountLabel: value('licenseAccountLabel') || null }
                                     : { provider: value('provider') || null, expiresOn: optionalDate('expiresOn') };
-                        const dto = { kind: activeKind, name: form.elements.name.value.trim(), status: opts.wishlist ? 'wishlist' : (draft.status || (existing ? existing.status : 'active')), currency: currency, categoryId: form.elements.categoryId ? form.elements.categoryId.value : (existing ? existing.categoryId : null), tagIds: tagIds, cover: persistedCover, notes: form.elements.notes ? form.elements.notes.value || '' : (existing ? (existing.notes || '') : '') };
+                        const dto = { kind: activeKind, name: form.elements.name.value.trim(), status: opts.wishlist ? 'wishlist' : (draft.status || (existing ? existing.status : 'active')), currency: currency, categoryId: form.elements.categoryId ? form.elements.categoryId.value : (existing ? existing.categoryId : null), tagIds: tagIds, cover: persistedCover, notes: form.elements.notes ? form.elements.notes.value || '' : (existing ? (existing.notes || '') : ''), brandId: brandId, channelId: channelId };
                         if (!existing) dto.id = formAssetId;
                         if (opts.wishlist) dto.wishlist = { expectedAmountMinor: amount, reason: '' };
                         else { dto.acquiredOn = form.elements.acquiredOn ? form.elements.acquiredOn.value : todayISO(); dto.statusChangedOn = dto.status === 'retired' ? (value('retiredDate') || todayISO()) : dto.acquiredOn; dto.details = baseDetails; }
@@ -21074,7 +21897,7 @@ openMaintenanceSheet(id, preferredHost) { return this.openFormalWorkflowDialog(i
         const asset = (this.assets || []).find(item => item && item.id === id);
         if (!asset || asset.kind !== FORMAL_ASSET_KIND.PHYSICAL) throw new Error('physical asset is required');
         const defaultDate = asset.statusChangedOn || todayISO();
-        const body = `<div class="am-sale-sheet"><form data-sale-form><label>${escapeHtml(this._t('physicalSaleFieldPrice', '转让价格'))}<input name="salePrice" type="number" min="0.01" step="0.01" required></label><label>${escapeHtml(this._t('physicalSaleFieldDate', '转让日期'))}<span class="am-datepicker-cell" data-am-datepicker="soldOn" data-am-shortcuts="today"><input type="hidden" name="soldOn" value="${escapeHtml(defaultDate)}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(defaultDate || this._t('datePickerPlaceholder', '选择日期'))}</button></span></label><label>${escapeHtml(this._t('physicalSaleFieldNote', '备注（可选）'))}<textarea name="note" rows="3"></textarea></label><button type="submit">${escapeHtml(this._t('physicalSaleConfirm', '转让'))}</button></form></div>`;
+        const body = `<div class="am-sale-sheet"><form data-sale-form><label>${escapeHtml(this._t('physicalSaleFieldPrice', '转让价格'))}${this._requiredDotHtml()}<input name="salePrice" type="number" min="0.01" step="0.01" required></label><label>${escapeHtml(this._t('physicalSaleFieldDate', '转让日期'))}${this._requiredDotHtml()}<span class="am-datepicker-cell" data-am-datepicker="soldOn" data-am-shortcuts="today"><input type="hidden" name="soldOn" value="${escapeHtml(defaultDate)}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(defaultDate || this._t('datePickerPlaceholder', '选择日期'))}</button></span></label><label>${escapeHtml(this._t('physicalSaleFieldNote', '备注（可选）'))}<textarea name="note" rows="3"></textarea></label><button type="submit">${escapeHtml(this._t('physicalSaleConfirm', '转让'))}</button></form></div>`;
         return this.showDialog(this._t('physicalSaleTitle', '转让'), body, dialog => {
             const form = dialog.element.querySelector('[data-sale-form]');
             this._bindAmDatepickers(dialog.element);
@@ -21108,7 +21931,7 @@ openMaintenanceSheet(id, preferredHost) { return this.openFormalWorkflowDialog(i
             currentRemaining = projection && Number.isSafeInteger(projection.remainingCount) ? projection.remainingCount : 0;
         } catch (error) { currentRemaining = 0; }
         const defaultDate = todayISO();
-        const body = `<div class="am-prepaid-adjust-sheet"><p>${escapeHtml(this._t('prepaidRemainingCountField', '剩余次数'))}：${currentRemaining}</p><form data-prepaid-adjust-form><label>${escapeHtml(this._t('prepaidRemainingCountField', '剩余次数'))}<input name="targetCount" type="number" min="0" step="1" value="${currentRemaining}" required></label><label>${escapeHtml(this._t('renewFieldStartDate', '生效日期'))}<span class="am-datepicker-cell" data-am-datepicker="effectiveDate" data-am-shortcuts="today"><input type="hidden" name="effectiveDate" value="${escapeHtml(defaultDate)}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(defaultDate || this._t('datePickerPlaceholder', '选择日期'))}</button></span></label><label>${escapeHtml(this._t('fieldNote', '备注'))}<input name="note" type="text" value="${escapeHtml(this._t('prepaidAdjustReasonDefault', '次数校正'))}"></label><button type="submit">${escapeHtml(this._t('prepaidCountAdjustConfirm', '保存校正'))}</button></form></div>`;
+        const body = `<div class="am-prepaid-adjust-sheet"><p>${escapeHtml(this._t('prepaidRemainingCountField', '剩余次数'))}：${currentRemaining}</p><form data-prepaid-adjust-form><label>${escapeHtml(this._t('prepaidRemainingCountField', '剩余次数'))}${this._requiredDotHtml()}<input name="targetCount" type="number" min="0" step="1" value="${currentRemaining}" required></label><label>${escapeHtml(this._t('renewFieldStartDate', '生效日期'))}${this._requiredDotHtml()}<span class="am-datepicker-cell" data-am-datepicker="effectiveDate" data-am-shortcuts="today"><input type="hidden" name="effectiveDate" value="${escapeHtml(defaultDate)}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(defaultDate || this._t('datePickerPlaceholder', '选择日期'))}</button></span></label><label>${escapeHtml(this._t('fieldNote', '备注'))}<input name="note" type="text" value="${escapeHtml(this._t('prepaidAdjustReasonDefault', '次数校正'))}"></label><button type="submit">${escapeHtml(this._t('prepaidCountAdjustConfirm', '保存校正'))}</button></form></div>`;
         return this.showDialog(this._t('prepaidCountAdjustTitle', '校正剩余次数'), body, dialog => {
             const form = dialog.element.querySelector('[data-prepaid-adjust-form]');
             this._bindAmDatepickers(dialog.element);
@@ -21137,7 +21960,7 @@ openMaintenanceSheet(id, preferredHost) { return this.openFormalWorkflowDialog(i
             currentRemaining = projection && Number.isSafeInteger(projection.remainingCount) ? projection.remainingCount : 0;
         } catch (error) { currentRemaining = 0; }
         const defaultDate = todayISO();
-        const body = `<div class="am-prepaid-outflow-sheet"><p>${escapeHtml(this._t('prepaidRemainingCountField', '剩余次数'))}：${currentRemaining}</p><form data-prepaid-outflow-form><label>${escapeHtml(this._t('prepaidRecordOutflowField', '消费次数'))}<input name="count" type="number" min="1" step="1" value="1" required></label><label>${escapeHtml(this._t('renewFieldStartDate', '生效日期'))}<span class="am-datepicker-cell" data-am-datepicker="effectiveDate" data-am-shortcuts="today"><input type="hidden" name="effectiveDate" value="${escapeHtml(defaultDate)}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(defaultDate || this._t('datePickerPlaceholder', '选择日期'))}</button></span></label><label>${escapeHtml(this._t('fieldNote', '备注'))}<input name="note" type="text"></label><button type="submit">${escapeHtml(this._t('btnSave', '保存'))}</button></form></div>`;
+        const body = `<div class="am-prepaid-outflow-sheet"><p>${escapeHtml(this._t('prepaidRemainingCountField', '剩余次数'))}：${currentRemaining}</p><form data-prepaid-outflow-form><label>${escapeHtml(this._t('prepaidRecordOutflowField', '消费次数'))}${this._requiredDotHtml()}<input name="count" type="number" min="1" step="1" value="1" required></label><label>${escapeHtml(this._t('renewFieldStartDate', '生效日期'))}${this._requiredDotHtml()}<span class="am-datepicker-cell" data-am-datepicker="effectiveDate" data-am-shortcuts="today"><input type="hidden" name="effectiveDate" value="${escapeHtml(defaultDate)}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(defaultDate || this._t('datePickerPlaceholder', '选择日期'))}</button></span></label><label>${escapeHtml(this._t('fieldNote', '备注'))}<input name="note" type="text"></label><button type="submit">${escapeHtml(this._t('btnSave', '保存'))}</button></form></div>`;
         return this.showDialog(this._t('prepaidOutflowTitle', '记一笔消费'), body, dialog => {
             const form = dialog.element.querySelector('[data-prepaid-outflow-form]');
             this._bindAmDatepickers(dialog.element);
@@ -21197,11 +22020,11 @@ openMaintenanceSheet(id, preferredHost) { return this.openFormalWorkflowDialog(i
             ? `${this._t('prepaidBalance', '余额')}：${formatAmountMinor(currentBalanceMinor, currency)}`
             : `${this._t('prepaidRemainingCount', '剩余次数')}：${currentRemaining}`;
         const valueField = isAmountAction
-            ? `<label>${escapeHtml(this._t('prepaidFieldAmount', '金额'))}<input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required></label>`
+            ? `<label>${escapeHtml(this._t('prepaidFieldAmount', '金额'))}${this._requiredDotHtml()}<input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required></label>`
             : (config.kind === 'countAdjust'
-                ? `<label>${escapeHtml(this._t('prepaidRemainingCountField', '剩余次数'))}<input name="targetCount" type="number" min="0" step="1" value="${currentRemaining}" required></label>`
-                : `<label>${escapeHtml(this._t('prepaidFieldCount', '次数'))}<input name="count" type="number" min="1" step="1" value="1" required></label>`);
-        const body = `<div class="am-prepaid-quick-sheet"><p class="am-prepaid-quick-sheet__summary">${escapeHtml(summary)}</p><form data-prepaid-quick-form>${valueField}<label>${escapeHtml(this._t('prepaidFieldEffectiveDate', '生效日期'))}<span class="am-datepicker-cell" data-am-datepicker="effectiveDate" data-am-shortcuts="today"><input type="hidden" name="effectiveDate" value="${escapeHtml(defaultDate)}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(defaultDate || this._t('datePickerPlaceholder', '选择日期'))}</button></span></label><label>${escapeHtml(this._t('fieldNote', '备注'))}<input name="note" type="text"></label><button type="submit">${escapeHtml(this._t('btnSave', '保存'))}</button></form></div>`;
+                ? `<label>${escapeHtml(this._t('prepaidRemainingCountField', '剩余次数'))}${this._requiredDotHtml()}<input name="targetCount" type="number" min="0" step="1" value="${currentRemaining}" required></label>`
+                : `<label>${escapeHtml(this._t('prepaidFieldCount', '次数'))}${this._requiredDotHtml()}<input name="count" type="number" min="1" step="1" value="1" required></label>`);
+        const body = `<div class="am-prepaid-quick-sheet"><p class="am-prepaid-quick-sheet__summary">${escapeHtml(summary)}</p><form data-prepaid-quick-form>${valueField}<label>${escapeHtml(this._t('prepaidFieldEffectiveDate', '生效日期'))}${this._requiredDotHtml()}<span class="am-datepicker-cell" data-am-datepicker="effectiveDate" data-am-shortcuts="today"><input type="hidden" name="effectiveDate" value="${escapeHtml(defaultDate)}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(defaultDate || this._t('datePickerPlaceholder', '选择日期'))}</button></span></label><label>${escapeHtml(this._t('fieldNote', '备注'))}<input name="note" type="text"></label><button type="submit">${escapeHtml(this._t('btnSave', '保存'))}</button></form></div>`;
         return this.showDialog(config.title, body, dialog => {
             const form = dialog.element.querySelector('[data-prepaid-quick-form]');
             this._bindAmDatepickers(dialog.element);
@@ -21506,6 +22329,8 @@ openMaintenanceSheet(id, preferredHost) { return this.openFormalWorkflowDialog(i
             const result = await this.storage.replaceFormalDomainFromBackup(snapshot);
             const committed = result.committedSnapshot;
             this.assets = committed.assets; this._tags = committed.tags;
+            this._brands = committed.dimensions && Array.isArray(committed.dimensions.brands) ? committed.dimensions.brands : [];
+            this._channels = committed.dimensions && Array.isArray(committed.dimensions.channels) ? committed.dimensions.channels : [];
             this._financialEvents = committed.financialEvents; this._lifecycleEvents = committed.lifecycleEvents;
             this._subscriptionPeriods = committed.subscriptionPeriods; this._prepaidTransactions = committed.prepaidTransactions;
             this._maintenanceRecords = committed.maintenance; this.settings = committed.settings;
@@ -21540,6 +22365,8 @@ openMaintenanceSheet(id, preferredHost) { return this.openFormalWorkflowDialog(i
             const result = await this.storage.initializeFormalStorageReset({ confirmReset: true });
             const committed = result.committedSnapshot || {};
             this.assets = committed.assets || []; this._tags = committed.tags || [];
+            this._brands = committed.dimensions && Array.isArray(committed.dimensions.brands) ? committed.dimensions.brands : [];
+            this._channels = committed.dimensions && Array.isArray(committed.dimensions.channels) ? committed.dimensions.channels : [];
             this.settings = committed.settings || Object.assign({}, DEFAULT_SETTINGS);
             this.wishlistEvents = []; this._opLogs = []; this._maintenanceRecords = [];
             this._wishlistEventsLoaded = true;

@@ -92,6 +92,7 @@ const STORAGE_FILES = Object.freeze({
     assets: 'assets.json',
     settings: 'settings.json',
     tags: 'tags.json',
+    dimensions: 'dimensions.json',
     maintenance: 'maintenance.json',
     usage: 'usage.json',
     operationLogs: 'operationLogs.json',
@@ -145,6 +146,9 @@ const USAGE_MAX = 1000;           // v0.16-T4-α：使用记录上限（与 OPER
 const TAG_MAX = 200;              // v0.17-T1-α（M12）：tag 上限（与 OPERATION_LOG_MAX 同语义，尾部截断）
 const PREPAID_TRANSACTION_MAX = 3000;
 const TAG_ITEM_KEYS = Object.freeze(['id', 'label', 'emoji', 'color', 'isSystem', 'createdAt']);
+// v2.6.5 目录阶段1b：brands/channels 展示目录。目录条目复用 TAG_ITEM_KEYS 与
+// normalizeTagDirectory（每个目录独立受 TAG_MAX 上限约束）。
+const DIMENSIONS_DIRECTORY_KEYS = Object.freeze(['brands', 'channels']);
 
 const FORMAL_ERROR_CODE = Object.freeze({
     RESET_REQUIRED: 'FORMAL_SCHEMA_RESET_REQUIRED',
@@ -164,7 +168,7 @@ const FORMAL_BACKUP_SCHEMA_VERSION = 1;
 // not a formal import format and must never pass through formal validation.
 const RAW_RESET_BACKUP_FORMAT = 'siyuan-asset-management-raw-reset-backup';
 const FORMAL_BACKUP_DATA_KEYS = Object.freeze([
-    'assets', 'tags', 'wishlistEvents', 'operationLogs', 'maintenance', 'usage',
+    'assets', 'tags', 'dimensions', 'wishlistEvents', 'operationLogs', 'maintenance', 'usage',
     'prepaidTransactions', 'financialEvents', 'lifecycleEvents',
     'subscriptionPeriods', 'exchangeRates',
 ]);
@@ -197,6 +201,9 @@ const FORMAL_SIDECAR_DEFINITIONS = Object.freeze({
     lifecycleEvents: Object.freeze({ file: STORAGE_FILES.lifecycleEvents, recordKey: 'events' }),
     subscriptionPeriods: Object.freeze({ file: STORAGE_FILES.subscriptionPeriods, recordKey: 'records' }),
     exchangeRates: Object.freeze({ file: STORAGE_FILES.exchangeRates, objectPayload: true }),
+    // v2.6.5 目录阶段1b：双目录对象 wrapper（brands + channels），不复用
+    // recordKey 单数组形态，由 readStrictFormalDimensions 专用分支处理。
+    dimensions: Object.freeze({ file: STORAGE_FILES.dimensions, dimensionsPayload: true }),
 });
 
 function formalStorageError(code, message, detail) {
@@ -244,9 +251,12 @@ function assertStrictFormalAssetWrapper(raw) {
 function readStrictFormalSidecar(raw, key) {
     const definition = FORMAL_SIDECAR_DEFINITIONS[key];
     if (!definition) throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID, 'unknown formal sidecar ' + key);
-    if (isMissingStoragePayload(raw)) return definition.objectPayload
-        ? { schemaVersion: SIDECAR_SCHEMA, baseCurrency: 'CNY', rates: {} }
-        : { schemaVersion: SIDECAR_SCHEMA, [definition.recordKey]: [] };
+    if (isMissingStoragePayload(raw)) {
+        if (definition.dimensionsPayload) return emptyFormalDimensionsSnapshot();
+        return definition.objectPayload
+            ? { schemaVersion: SIDECAR_SCHEMA, baseCurrency: 'CNY', rates: {} }
+            : { schemaVersion: SIDECAR_SCHEMA, [definition.recordKey]: [] };
+    }
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
         throw formalStorageError(FORMAL_ERROR_CODE.STORAGE_CORRUPT, definition.file + ' must contain an object wrapper');
     }
@@ -255,6 +265,7 @@ function readStrictFormalSidecar(raw, key) {
             definition.file + ' is not a strict v1 sidecar wrapper');
     }
     if (definition.objectPayload) return assertFormalExchangeRates(raw);
+    if (definition.dimensionsPayload) return readStrictFormalDimensions(raw);
     if (!Array.isArray(raw[definition.recordKey])) {
         throw formalStorageError(FORMAL_ERROR_CODE.STORAGE_CORRUPT,
             definition.file + ' must contain a ' + definition.recordKey + ' array');
@@ -264,6 +275,69 @@ function readStrictFormalSidecar(raw, key) {
     if (unknown.length) throw formalStorageError(FORMAL_ERROR_CODE.STORAGE_CORRUPT,
         definition.file + ' contains unsupported field ' + unknown[0]);
     return cloneStorageSnapshot(raw);
+}
+
+function emptyFormalDimensionsSnapshot() {
+    return { schemaVersion: SIDECAR_SCHEMA, brands: [], channels: [] };
+}
+
+/**
+ * v2.6.5 目录阶段1b：dimensions.json 严格读路径（双目录对象 wrapper，区别于
+ * 单 recordKey 数组 sidecar）。
+ *   - 整文件缺失/空 payload → 空目录（旧快照容忍，返回 {brands:[],channels:[]}）
+ *   - schemaVersion !== 1 → RESET_REQUIRED（文案风格同其它 sidecar）
+ *   - 未知顶层字段 / brands、channels 缺失或非数组 → STORAGE_CORRUPT
+ *   - 目录条目复用 tags.json 契约（TAG_ITEM_KEYS + normalizeTagDirectory），
+ *     每个目录独立受 TAG_MAX 上限约束
+ *   - brand 与 channel 的 id 共享同一唯一命名空间，避免资产外键指向歧义
+ */
+function readStrictFormalDimensions(raw) {
+    if (isMissingStoragePayload(raw)) return emptyFormalDimensionsSnapshot();
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        throw formalStorageError(FORMAL_ERROR_CODE.STORAGE_CORRUPT, 'dimensions.json must contain an object wrapper');
+    }
+    if (raw.schemaVersion !== SIDECAR_SCHEMA) {
+        throw formalStorageError(FORMAL_ERROR_CODE.RESET_REQUIRED,
+            'dimensions.json is not a strict v1 sidecar wrapper');
+    }
+    const allowed = ['schemaVersion'].concat(DIMENSIONS_DIRECTORY_KEYS).concat(['updatedAt']);
+    const unknown = Object.keys(raw).filter(key => allowed.indexOf(key) < 0);
+    if (unknown.length) throw formalStorageError(FORMAL_ERROR_CODE.STORAGE_CORRUPT,
+        'dimensions.json contains unsupported field ' + unknown[0]);
+    if (raw.updatedAt != null && !isFormalInstantString(raw.updatedAt)) {
+        throw formalStorageError(FORMAL_ERROR_CODE.STORAGE_CORRUPT, 'dimensions.json updatedAt is invalid');
+    }
+    const directories = DIMENSIONS_DIRECTORY_KEYS.map(key => {
+        if (!Array.isArray(raw[key])) throw formalStorageError(FORMAL_ERROR_CODE.STORAGE_CORRUPT,
+            'dimensions.json must contain a ' + key + ' array');
+        return [key, normalizeTagDirectory(raw[key])];
+    });
+    const seen = new Set();
+    directories.forEach(([, directory]) => directory.forEach(entry => {
+        if (seen.has(entry.id)) throw formalStorageError(FORMAL_ERROR_CODE.REFERENCE_INVALID,
+            'dimensions.json contains duplicate directory id ' + entry.id);
+        seen.add(entry.id);
+    }));
+    const payload = { schemaVersion: SIDECAR_SCHEMA };
+    if (raw.updatedAt != null) payload.updatedAt = raw.updatedAt;
+    directories.forEach(([key, directory]) => { payload[key] = directory; });
+    return payload;
+}
+
+/**
+ * v2.6.5 目录阶段1b：dimensions 写路径 payload 工厂（formalPayloadForChange /
+ * formalV2PayloadForChange 共用）。brands / channels 必须都是数组，条目经
+ * normalizeTagDirectory 归一（trim label、拒绝未知字段、查重、上限）。
+ */
+function dimensionsPayloadForChange(value, now) {
+    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    const directories = DIMENSIONS_DIRECTORY_KEYS.map(key => {
+        if (!Array.isArray(source[key])) {
+            throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID, 'dimensions must contain a ' + key + ' array');
+        }
+        return [key, normalizeTagDirectory(source[key])];
+    });
+    return Object.assign({ schemaVersion: SIDECAR_SCHEMA, updatedAt: now }, Object.fromEntries(directories));
 }
 
 function assertFormalKnownRecordKeys(record, allowed, path) {
@@ -385,7 +459,7 @@ function getCanonicalFormalOperationSnapshot(value) {
     return validation.valid ? value : null;
 }
 
-function assertFormalOperationLog(record, path, owned, wishlistIds, tagsById, records, recordIndex) {
+function assertFormalOperationLog(record, path, owned, wishlistIds, tagsById, dimensionsById, records, recordIndex) {
     assertFormalKnownRecordKeys(record, ['id', 'type', 'assetId', 'assetName', 'field', 'oldValue', 'newValue', 'ts'], path);
     if (typeof record.assetId !== 'string' || !isUUID(record.assetId) || record.assetId !== record.assetId.toLowerCase()) {
         throw formalStorageError(FORMAL_ERROR_CODE.STORAGE_CORRUPT, path + '.assetId must be a lowercase UUID');
@@ -400,6 +474,10 @@ function assertFormalOperationLog(record, path, owned, wishlistIds, tagsById, re
     const purchase = record.type === 'wishlist-to-active' || record.type === 'wishlist-purchase';
     const tagOperation = record.type === 'tag-create' || record.type === 'tag-delete';
     const tagStyleUpdate = record.type === 'tag-update';
+    // v2.6.5 目录阶段1b：brand-*/channel-* 审计操作与 tag 同构（镜像校验模式）。
+    const directoryOperation = record.type === 'brand-create' || record.type === 'brand-delete'
+        || record.type === 'channel-create' || record.type === 'channel-delete';
+    const directoryStyleUpdate = record.type === 'brand-update' || record.type === 'channel-update';
     const hasHistoricalOwnerName = (owner, historicalName) => {
         if (owner.name === historicalName) return true;
         let expectedName = historicalName;
@@ -424,7 +502,8 @@ function assertFormalOperationLog(record, path, owned, wishlistIds, tagsById, re
         return false;
     };
     if (ordinary.indexOf(record.type) < 0 && record.type !== 'delete'
-        && record.type !== 'wishlist-abandon' && !purchase && !tagOperation && !tagStyleUpdate) {
+        && record.type !== 'wishlist-abandon' && !purchase && !tagOperation && !tagStyleUpdate
+        && !directoryOperation && !directoryStyleUpdate) {
         throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID, path + '.type is invalid');
     }
     if (typeof record.assetName !== 'string' || (record.field !== null && typeof record.field !== 'string') || !isFormalInstantString(record.ts)) throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID, path + ' has invalid metadata');
@@ -466,6 +545,53 @@ function assertFormalOperationLog(record, path, owned, wishlistIds, tagsById, re
             }
         } else if (record.newValue !== null) {
             throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID, path + '.newValue must be null for tag-delete');
+        }
+        return;
+    }
+    if (directoryStyleUpdate) {
+        // v2.6.5 目录阶段1b：brand/channel-update 与 tag-update 同构，只允许
+        // color 样式变更；身份（id + label）不可变。
+        if (record.field !== 'color') {
+            throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID, path + '.field must be "color" for ' + record.type);
+        }
+        const validDirectoryColorValue = value => value === null || (typeof value === 'string' && value === value.trim());
+        if (!validDirectoryColorValue(record.oldValue) || !validDirectoryColorValue(record.newValue)) {
+            throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID,
+                path + ' ' + record.type + ' values must be null or trimmed color strings');
+        }
+        const currentDirectoryEntry = dimensionsById && dimensionsById.get(record.assetId);
+        if (currentDirectoryEntry && currentDirectoryEntry.label !== record.assetName) {
+            throw formalStorageError(FORMAL_ERROR_CODE.REFERENCE_INVALID,
+                path + ' ' + record.type + ' does not match the current directory entry');
+        }
+        return;
+    }
+    if (directoryOperation) {
+        // 镜像 tagOperation：create/delete 携带完整目录条目快照（id + label 身份
+        // 相等即可，样式字段不参与），update 允许颜色漂移，create 允许条目已被
+        // 后续同类型 delete 终止（terminal delete 证明）。
+        const isDirectoryCreate = record.type === 'brand-create' || record.type === 'channel-create';
+        const terminalDeleteType = record.type === 'brand-create' ? 'brand-delete'
+            : record.type === 'channel-create' ? 'channel-delete' : record.type;
+        const directorySnapshot = isDirectoryCreate ? record.newValue : record.oldValue;
+        let normalizedDirectoryEntry;
+        try { normalizedDirectoryEntry = normalizeTagDirectory([directorySnapshot])[0]; }
+        catch (cause) { throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID, path + ' has invalid directory snapshot: ' + cause.message); }
+        if (normalizedDirectoryEntry.id !== record.assetId || normalizedDirectoryEntry.label !== record.assetName || record.field !== null) {
+            throw formalStorageError(FORMAL_ERROR_CODE.REFERENCE_INVALID, path + ' directory snapshot does not match operation log');
+        }
+        const sameDirectoryIdentity = value => !!value && value.id === normalizedDirectoryEntry.id && value.label === normalizedDirectoryEntry.label;
+        if (isDirectoryCreate) {
+            const currentDirectoryEntry = dimensionsById && dimensionsById.get(record.assetId);
+            const terminalDirectoryDelete = (records || []).find(candidate => candidate && candidate.type === terminalDeleteType
+                && candidate.assetId === record.assetId && candidate.assetName === record.assetName
+                && sameDirectoryIdentity(candidate.oldValue)
+                && isFormalInstantString(candidate.ts) && Date.parse(candidate.ts) >= Date.parse(record.ts));
+            if ((!currentDirectoryEntry || !sameDirectoryIdentity(currentDirectoryEntry)) && !terminalDirectoryDelete || record.oldValue !== null) {
+                throw formalStorageError(FORMAL_ERROR_CODE.REFERENCE_INVALID, path + ' does not match the current directory entry');
+            }
+        } else if (record.newValue !== null) {
+            throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID, path + '.newValue must be null for ' + record.type);
         }
         return;
     }
@@ -623,10 +749,26 @@ function assertFormalDomainSnapshot(snapshot) {
         tagsById.set(tag.id, tag);
     });
 
+    // v2.6.5 目录阶段1b：dimensions 先于 sidecar 记录循环归一（operationLogs
+    // 的 brand-*/channel-* 审计校验依赖完整 dimensionsById）。目录 id 进入与
+    // assets/tags 相同的全局唯一命名空间；资产 brandId/channelId 引用不在此处
+    // 强校验（阶段1a 约定：旧数据读取容忍悬空引用）。
+    const dimensions = readStrictFormalDimensions(snapshot.dimensions);
+    const dimensionsById = new Map();
+    dimensions.brands.concat(dimensions.channels).forEach(entry => {
+        if (globalIds.has(entry.id)) throw formalStorageError(FORMAL_ERROR_CODE.REFERENCE_INVALID, 'duplicate global id ' + entry.id);
+        globalIds.add(entry.id);
+        dimensionsById.set(entry.id, entry);
+    });
+
     const sidecars = {};
     Object.keys(FORMAL_SIDECAR_DEFINITIONS).forEach(key => {
-        const payload = readStrictFormalSidecar(snapshot[key], key);
         const definition = FORMAL_SIDECAR_DEFINITIONS[key];
+        if (definition.dimensionsPayload) {
+            sidecars[key] = cloneStorageSnapshot(dimensions);
+            return;
+        }
+        const payload = readStrictFormalSidecar(snapshot[key], key);
         if (definition.objectPayload) {
             sidecars[key] = cloneStorageSnapshot(payload);
             return;
@@ -646,7 +788,7 @@ function assertFormalDomainSnapshot(snapshot) {
             }
             if (key === 'maintenance') assertFormalMaintenance(record, path, owned);
             if (key === 'operationLogs') {
-                assertFormalOperationLog(record, path, owned, wishlistIds, tagsById, records, index);
+                assertFormalOperationLog(record, path, owned, wishlistIds, tagsById, dimensionsById, records, index);
                 return;
             }
             const owner = assertFormalOwnedRecord(record, path, owned);
@@ -907,7 +1049,8 @@ function cloneFormalDomainWrappers(validated) {
     const result = { assets: cloneStorageSnapshot(validated.assets), tags: cloneStorageSnapshot(validated.tags) };
     Object.keys(FORMAL_SIDECAR_DEFINITIONS).forEach(key => {
         const definition = FORMAL_SIDECAR_DEFINITIONS[key];
-        result[key] = definition.objectPayload ? cloneStorageSnapshot(validated.sidecars[key])
+        result[key] = definition.objectPayload || definition.dimensionsPayload
+            ? cloneStorageSnapshot(validated.sidecars[key])
             : { schemaVersion: SIDECAR_SCHEMA, [definition.recordKey]: validated.sidecars[key].map(cloneStorageSnapshot) };
     });
     return result;
@@ -923,9 +1066,11 @@ function createFormalResetSnapshot(options) {
     };
     Object.keys(FORMAL_SIDECAR_DEFINITIONS).forEach(key => {
         const definition = FORMAL_SIDECAR_DEFINITIONS[key];
-        snapshot[key] = definition.objectPayload
-            ? { schemaVersion: SIDECAR_SCHEMA, baseCurrency: 'CNY', rates: {}, updatedAt: now }
-            : { schemaVersion: SIDECAR_SCHEMA, [definition.recordKey]: [], updatedAt: now };
+        snapshot[key] = definition.dimensionsPayload
+            ? { schemaVersion: SIDECAR_SCHEMA, brands: [], channels: [], updatedAt: now }
+            : definition.objectPayload
+                ? { schemaVersion: SIDECAR_SCHEMA, baseCurrency: 'CNY', rates: {}, updatedAt: now }
+                : { schemaVersion: SIDECAR_SCHEMA, [definition.recordKey]: [], updatedAt: now };
     });
     return snapshot;
 }
@@ -1447,6 +1592,14 @@ function createStorage(plugin) {
                             && ownDataValue(rates, key) !== undefined).length
                         : rawArrayCount(raw.exchangeRates, ['rates', 'records', 'items']);
                 })(),
+                dimensions: (() => {
+                    const wrapper = raw.dimensions;
+                    if (!wrapper || typeof wrapper !== 'object' || Array.isArray(wrapper)) return 0;
+                    return DIMENSIONS_DIRECTORY_KEYS.reduce((total, key) => {
+                        const directory = ownDataValue(wrapper, key);
+                        return total + (Array.isArray(directory) ? directory.length : 0);
+                    }, 0);
+                })(),
             };
             const rawAssets = Array.isArray(raw.assets) ? raw.assets
                 : ['assets', 'records', 'items'].map(key => ownDataValue(raw.assets, key)).find(Array.isArray) || [];
@@ -1471,7 +1624,7 @@ function createStorage(plugin) {
             tags: validated.tags.tags.map(cloneStorageSnapshot),
         };
         Object.keys(FORMAL_SIDECAR_DEFINITIONS).forEach(key => {
-            result[key] = FORMAL_SIDECAR_DEFINITIONS[key].objectPayload
+            result[key] = FORMAL_SIDECAR_DEFINITIONS[key].objectPayload || FORMAL_SIDECAR_DEFINITIONS[key].dimensionsPayload
                 ? cloneStorageSnapshot(validated.sidecars[key])
                 : validated.sidecars[key].map(cloneStorageSnapshot);
         });
@@ -1500,6 +1653,7 @@ function createStorage(plugin) {
             const tags = Array.isArray(value) ? value : value && value.tags;
             return { schemaVersion: SIDECAR_SCHEMA, tags: normalizeTagDirectory(tags), updatedAt: now };
         }
+        if (key === 'dimensions') return dimensionsPayloadForChange(value, now);
         const definition = FORMAL_SIDECAR_DEFINITIONS[key];
         if (!definition) throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID, 'unsupported formal change key ' + key);
         if (definition.objectPayload) {
@@ -1534,6 +1688,7 @@ function createStorage(plugin) {
             const tags = Array.isArray(value) ? value : value && value.tags;
             return { schemaVersion: SIDECAR_SCHEMA, tags: normalizeTagDirectory(tags), updatedAt: now };
         }
+        if (key === 'dimensions') return dimensionsPayloadForChange(value, now);
         const definition = FORMAL_SIDECAR_DEFINITIONS[key];
         if (!definition) throw formalStorageError(FORMAL_ERROR_CODE.IMPORT_INVALID, 'unsupported formal change key ' + key);
         if (definition.objectPayload) {
@@ -1556,7 +1711,9 @@ function createStorage(plugin) {
         // is validated before any write and failures still compensate in reverse,
         // while this ordering never leaves a freshly written lifecycle/financial
         // record referring to an asset that has not been persisted yet.
-        const order = ['tags', 'assets'].concat(Object.keys(FORMAL_SIDECAR_DEFINITIONS)).concat(['settings'])
+        const order = ['tags', 'dimensions', 'assets']
+            .concat(Object.keys(FORMAL_SIDECAR_DEFINITIONS).filter(key => key !== 'dimensions'))
+            .concat(['settings'])
             .filter(key => Object.prototype.hasOwnProperty.call(payloads, key));
         const fileFor = key => key === 'assets' ? STORAGE_FILES.assets
             : (key === 'settings' ? STORAGE_FILES.settings
@@ -1633,7 +1790,7 @@ function createStorage(plugin) {
             };
             Object.keys(FORMAL_SIDECAR_DEFINITIONS).forEach(key => {
                 const definition = FORMAL_SIDECAR_DEFINITIONS[key];
-                complete[key] = definition.objectPayload
+                complete[key] = definition.objectPayload || definition.dimensionsPayload
                     ? cloneStorageSnapshot(validatedCurrent.sidecars[key])
                     : { schemaVersion: SIDECAR_SCHEMA, [definition.recordKey]: validatedCurrent.sidecars[key].slice() };
             });
@@ -1656,7 +1813,7 @@ function createStorage(plugin) {
             result.tags = complete.tags.tags.map(cloneStorageSnapshot);
             Object.keys(FORMAL_SIDECAR_DEFINITIONS).forEach(key => {
                 const definition = FORMAL_SIDECAR_DEFINITIONS[key];
-                result[key] = definition.objectPayload
+                result[key] = definition.objectPayload || definition.dimensionsPayload
                     ? cloneStorageSnapshot(complete[key])
                     : complete[key][definition.recordKey].map(cloneStorageSnapshot);
             });
@@ -1701,7 +1858,7 @@ function createStorage(plugin) {
             };
             Object.keys(FORMAL_SIDECAR_DEFINITIONS).forEach(key => {
                 const definition = FORMAL_SIDECAR_DEFINITIONS[key];
-                complete[key] = definition.objectPayload
+                complete[key] = definition.objectPayload || definition.dimensionsPayload
                     ? cloneStorageSnapshot(validatedCurrent.sidecars[key])
                     : { schemaVersion: SIDECAR_SCHEMA, [definition.recordKey]: validatedCurrent.sidecars[key].slice() };
             });
@@ -1724,7 +1881,7 @@ function createStorage(plugin) {
             result.tags = complete.tags.tags.map(cloneStorageSnapshot);
             Object.keys(FORMAL_SIDECAR_DEFINITIONS).forEach(key => {
                 const definition = FORMAL_SIDECAR_DEFINITIONS[key];
-                result[key] = definition.objectPayload
+                result[key] = definition.objectPayload || definition.dimensionsPayload
                     ? cloneStorageSnapshot(complete[key])
                     : complete[key][definition.recordKey].map(cloneStorageSnapshot);
             });
@@ -1799,6 +1956,9 @@ function createStorage(plugin) {
                 subscriptionPeriods: originalRaw.subscriptionPeriods && Array.isArray(originalRaw.subscriptionPeriods.records) ? originalRaw.subscriptionPeriods.records.length : 0,
                 exchangeRates: originalRaw.exchangeRates && originalRaw.exchangeRates.rates && typeof originalRaw.exchangeRates.rates === 'object'
                     ? Object.keys(originalRaw.exchangeRates.rates).length : 0,
+                dimensions: originalRaw.dimensions && typeof originalRaw.dimensions === 'object' && !Array.isArray(originalRaw.dimensions)
+                    ? DIMENSIONS_DIRECTORY_KEYS.reduce((total, key) => total + (Array.isArray(originalRaw.dimensions[key]) ? originalRaw.dimensions[key].length : 0), 0)
+                    : 0,
             });
             return result;
         });

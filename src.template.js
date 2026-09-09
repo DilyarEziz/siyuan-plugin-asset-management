@@ -555,7 +555,7 @@
 const { Plugin, Dialog, Menu, openTab, openMobileFileById } = require("siyuan");
 
 const DOCK_TYPE = "asset-management-dock";
-const PLUGIN_VERSION = "2.6.4";
+const PLUGIN_VERSION = "2.6.5";
 const AUTHOR_URL = "https://ld246.com/member/Dilyar";
 const ICONS8_URL = "https://icons8.com";
 
@@ -670,6 +670,9 @@ module.exports = class AssetManagementPlugin extends Plugin {
         if (!this.i18n || typeof this.i18n !== "object") this.i18n = this._i18nMap;
         this.assets = [];
         this._tags = [];
+        // v2.6.5 阶段2a：品牌 / 入手途径展示目录（dimensions.json），与 _tags 同模式
+        this._brands = [];
+        this._channels = [];
         this._assetsLoadedOk = false;
         // A formal view is only allowed to consume one complete, validated
         // snapshot. Never render a partial domain after an individual sidecar
@@ -677,9 +680,10 @@ module.exports = class AssetManagementPlugin extends Plugin {
         this._formalDomainLoaded = false;
         this._formalDomainError = null;
         this._formalDomainStateSnapshot = null;
-        // Home filters are formal-domain only. categoryId and tagIds are canonical
-        // controlled IDs/UUIDs; do not reintroduce deprecated model fields.
-        this.filter = { kind: "all", categoryId: "all", tagIds: [], status: "all", search: "", sort: "default" };
+        // Home filters are formal-domain only. categoryId/tagIds/brandIds/channelIds are
+        // canonical controlled IDs/UUIDs; do not reintroduce deprecated model fields.
+        // v2.6.5 阶段3b：brandIds / channelIds 为品牌 / 途径目录 UUID（OR 语义，applyFilter 已支持）。
+        this.filter = { kind: "all", categoryId: "all", tagIds: [], brandIds: [], channelIds: [], status: "all", search: "", sort: "default" };
         // 看板时间只控制购买数量趋势，不落盘、不筛选资产总览。
         this.dashboardTimeRange = '12m';
         // v2.6.3 补充：报表合并分析卡当前选中 tab（subscription | prepaid | wishlist）；
@@ -687,6 +691,11 @@ module.exports = class AssetManagementPlugin extends Plugin {
         // 供 report-analysis-tab 委托校验，避免接受不可用区块。
         this._reportAnalysisTab = null;
         this._reportAnalysisTabsCache = [];
+        // v2.6.5 阶段3a：维度分析卡当前选中维度（brand | channel）；null 表示尚未选择，
+        // 渲染时回退到第一个可用维度。可用集在每次渲染时缓存，供 report-dimension-tab
+        // 委托校验；tab 态独立于 v2.6.3 分析卡（_reportAnalysisTab）。
+        this._reportDimensionTab = null;
+        this._reportDimensionTabsCache = [];
         this._activeHomeFilterDropdown = null;
         this._itemMenu = null;
         // v0.17-T3-α（M13 批量操作 · 入口）：批量模式标志 + 选中集
@@ -788,9 +797,14 @@ this.dockElement = null;
         const rememberedSort = remembered && typeof remembered.sort === 'string' && remembered.sort
             && SORTS.some(sort => sort.id === remembered.sort) ? remembered.sort : null;
         this.filter.sort = rememberedSort || (this.settings ? this.settings.defaultSort : 'default');
-        // tagIds：逐项为字符串即可，不校验存在性（标签可能暂被删除，保留 id 便于恢复）。
+        // tagIds / brandIds / channelIds：逐项为字符串即可，不校验存在性（目录条目可能
+        // 暂被删除，保留 id 便于恢复）；v2.6.5 阶段3b：非数组一律兜底 []。
         this.filter.tagIds = remembered && Array.isArray(remembered.tagIds)
             ? remembered.tagIds.filter(id => typeof id === 'string' && id) : [];
+        this.filter.brandIds = remembered && Array.isArray(remembered.brandIds)
+            ? remembered.brandIds.filter(id => typeof id === 'string' && id) : [];
+        this.filter.channelIds = remembered && Array.isArray(remembered.channelIds)
+            ? remembered.channelIds.filter(id => typeof id === 'string' && id) : [];
     }
 
     /**
@@ -806,6 +820,8 @@ this.dockElement = null;
                 kind: this._kindToDisplayGroup(this.filter.kind),
                 sort: typeof this.filter.sort === 'string' && this.filter.sort ? this.filter.sort : 'default',
                 tagIds: Array.isArray(this.filter.tagIds) ? this.filter.tagIds.slice() : [],
+                brandIds: Array.isArray(this.filter.brandIds) ? this.filter.brandIds.slice() : [],
+                channelIds: Array.isArray(this.filter.channelIds) ? this.filter.channelIds.slice() : [],
             };
             const saved = this.saveSettings({ rememberedFilters: snapshot });
             if (saved && typeof saved.catch === 'function') {
@@ -2160,6 +2176,9 @@ openWishlistAbandonSheet(id) {
             this._formalDomainStateSnapshot = snapshot;
             this.assets = snapshot.assets;
             this._tags = snapshot.tags;
+            // v2.6.5 阶段2a：dimensions.json 双目录回写（缺文件时 readStrictFormalDimensions 返回空目录）
+            this._brands = snapshot.dimensions && Array.isArray(snapshot.dimensions.brands) ? snapshot.dimensions.brands : [];
+            this._channels = snapshot.dimensions && Array.isArray(snapshot.dimensions.channels) ? snapshot.dimensions.channels : [];
             this._financialEvents = snapshot.financialEvents;
 this._subscriptionPeriods = snapshot.subscriptionPeriods;
             this._prepaidTransactions = snapshot.prepaidTransactions;
@@ -2415,6 +2434,10 @@ this._subscriptionPeriods = snapshot.subscriptionPeriods;
                 const next = await resourceIndex.reconcileResourceIndex({
                     state: this.settings.resourceIndex,
                     assets: this.assets,
+                    // v2.6.5 阶段4：投影目录标签（tagLabels/brandLabel/channelLabel），
+                    // 悬挂引用由 resource-index 统一兜底为 '[missing:…]'。
+                    tags: this._tags,
+                    dimensions: { brands: this._brands, channels: this._channels },
                     target: target,
                     // In-flight requests cannot be cancelled, but no subsequent
                     // document API request may start once this plugin is unloaded.
@@ -2554,6 +2577,12 @@ this._subscriptionPeriods = snapshot.subscriptionPeriods;
         if (!transaction || transaction.noop) return transaction && transaction.context;
         this.assets = transaction.assets;
         this._tags = transaction.tags;
+        // v2.6.5 阶段2a：事务结果恒带 dimensions wrapper（formal transaction 对每个
+        // FORMAL_SIDECAR_DEFINITIONS 键都回包），双目录内存缓存随事务统一刷新。
+        if (transaction.dimensions && typeof transaction.dimensions === 'object') {
+            this._brands = Array.isArray(transaction.dimensions.brands) ? transaction.dimensions.brands : [];
+            this._channels = Array.isArray(transaction.dimensions.channels) ? transaction.dimensions.channels : [];
+        }
         this._financialEvents = transaction.financialEvents;
         this._subscriptionPeriods = transaction.subscriptionPeriods;
         this._prepaidTransactions = transaction.prepaidTransactions;
@@ -3788,6 +3817,12 @@ async deleteFormalWorkflowRecord(id, mode, recordId) {
     // checkValidity 全部不变；选中后对 hidden input dispatch input+change（与 datepicker pick 一致），
     // 既有 change 联动监听只需把选择器从 select 换成 input。弹层定位 / 外点关闭 / 滚动跟随与
     // _bindAmDatepickers 同构（fixed + body 挂载 + capture 监听）。同一时刻只开一个弹层。
+    // 阶段 2b：必填项视觉标识 —— label 尾部小红点。纯视觉标记，不参与任何校验；
+    // 仅允许加在"必填"字段的可见 label 之后，选填字段禁止使用（降低填写压力）。
+    _requiredDotHtml() {
+        return '<i class="am-required-dot" aria-hidden="true"></i>';
+    }
+
     _glassCycleOptions() {
         return FORMAL_BILLING_CYCLES.map(cycle => ({ value: cycle, label: this._t('formalCycle' + cycle, cycle === 'halfYearly' ? '半年付' : cycle) }));
     }
@@ -4135,10 +4170,10 @@ async deleteFormalWorkflowRecord(id, mode, recordId) {
         const renderTrigger = (kind) => {
             const state = this._getHomeFilterDropdownState(kind);
             const labelKey = kind === 'kind' ? 'filterDisplayGroup'
-                : kind === 'tag' ? 'filterTag'
+                : kind === 'tag' ? 'filterChip'
                     : kind === 'status' ? 'filterStatus' : 'filterSort';
             const labelFallback = kind === 'kind' ? '类型'
-                : kind === 'tag' ? '标签'
+                : kind === 'tag' ? '筛选'
                     : kind === 'status' ? '状态' : '排序';
             return `<button type="button" class="am-filter-select am-filter-trigger${state.active ? ' is-active' : ''}" data-action="toggle-home-filter-dropdown" data-filter-kind="${kind}" aria-label="${escapeHtml(this._t(labelKey, labelFallback))}" aria-haspopup="${kind === 'tag' ? 'dialog' : 'menu'}" aria-expanded="false">
                 <span class="am-filter-trigger__label">${escapeHtml(state.label)}</span>
@@ -4203,11 +4238,17 @@ async deleteFormalWorkflowRecord(id, mode, recordId) {
         return [];
     }
 
+    /** v2.6.5 阶段3b：筛选 chip 计数 = 标签 + 品牌 + 途径 三维度已选总数（非数组按 0）。 */
+    _homeFilterChipCount() {
+        const sizeOf = list => Array.isArray(list) ? list.length : 0;
+        return sizeOf(this.filter.tagIds) + sizeOf(this.filter.brandIds) + sizeOf(this.filter.channelIds);
+    }
+
     _getHomeFilterDropdownState(kind) {
         if (kind === 'tag') {
-            const count = Array.isArray(this.filter.tagIds) ? this.filter.tagIds.length : 0;
+            const count = this._homeFilterChipCount();
             return {
-                label: this._t('filterTag', '标签'),
+                label: this._t('filterChip', '筛选'),
                 count: count > 0 ? String(count) : '',
                 active: count > 0,
             };
@@ -4257,6 +4298,9 @@ _closeHomeFilterDropdown(expectedDropdown) {
         }
         if (active.dropdown && active.dropdown.parentNode) active.dropdown.parentNode.removeChild(active.dropdown);
         this._activeHomeFilterDropdown = null;
+        // v2.6.5 阶段3b：首页筛选下拉当前 tab（'tag' | 'brand' | 'channel'）。
+        // 仅视图态：开面板保持上次 tab，不持久化、不参与筛选记忆。
+        this._homeFilterMultiTab = 'tag';
     }
 
     openHomeFilterDropdown(trigger, kind) {
@@ -4272,7 +4316,7 @@ _closeHomeFilterDropdown(expectedDropdown) {
         dropdown.setAttribute('role', kind === 'tag' ? 'dialog' : 'menu');
         const dropdownLabelKey = kind === 'kind' ? 'filterDisplayGroup'
             : kind === 'category' ? 'fieldCategory'
-            : kind === 'tag' ? 'tagFilterTitle'
+            : kind === 'tag' ? 'filterChip'
                 : kind === 'status' ? 'filterStatus' : 'filterSort';
         dropdown.setAttribute('aria-label', this._t(dropdownLabelKey, '筛选'));
         document.body.appendChild(dropdown);
@@ -4302,8 +4346,9 @@ _closeHomeFilterDropdown(expectedDropdown) {
             dropdown.style.top = `${Math.round(rect.bottom + 2)}px`;
             dropdown.style.maxWidth = `${Math.floor(availableWidth)}px`;
             dropdown.style.maxHeight = `${Math.max(44, Math.floor(viewportHeight - rect.bottom - edge - 2))}px`;
-            /* v2.3.0-hotfix：tag 面板 minWidth 196→164，配合头部文字缩小整体收窄 */
-            dropdown.style.minWidth = `${Math.min(Math.max(Math.round(rect.width), kind === 'tag' ? 164 : 152), availableWidth)}px`;
+            /* v2.3.0-hotfix：tag 面板 minWidth 196→164，配合头部文字缩小整体收窄。
+               v2.6.5 阶段3b：面板加三 tab（标签/品牌/途径）后 164 过窄，放宽到 220。 */
+            dropdown.style.minWidth = `${Math.min(Math.max(Math.round(rect.width), kind === 'tag' ? 220 : 152), availableWidth)}px`;
             const dropdownWidth = Math.min(dropdown.offsetWidth || rect.width, availableWidth);
             /* v2.3.0 阶段4.1：tag 下拉右对齐（右边缘 = trigger 右边缘），其余下拉左对齐 trigger；
                最后在 [boundLeft, boundRight] 内统一 clamp（dropdownWidth ≤ availableWidth 恒成立，clamp 不越界）。 */
@@ -4328,38 +4373,74 @@ _closeHomeFilterDropdown(expectedDropdown) {
         };
         this._activeHomeFilterDropdown = { dropdown, trigger, kind, cleanup };
 
-const updateTagFilter = nextIds => {
-            this.filter.tagIds = Array.isArray(nextIds) ? nextIds : [];
-            // v2.6.4 筛选记忆：标签选择/清除/全选切换统一走此入口，一次写回。
-            this._rememberHomeFilters();
-            this._updateHomeFilterDropdownTrigger('tag');
-            renderDropdown();
+/* v2.6.5 阶段3b：筛选下拉三维 tab（标签 / 品牌 / 途径）。tab 是实例视图态
+           （_homeFilterMultiTab），开面板保持上次 tab；条目与全选交互完全复用标签板块形态。
+           维度 → filter 键 / 数据目录 / 空态文案 解析集中在此，板块渲染与事件绑定共用。 */
+        const FILTER_DIMENSIONS = ['tag', 'brand', 'channel'];
+        const dimensionFilterKey = dim => dim === 'tag' ? 'tagIds' : dim === 'brand' ? 'brandIds' : 'channelIds';
+        const dimensionCatalog = dim => dim === 'tag' ? this._getAssetTagCatalog()
+            : dim === 'brand' ? this._getDimensionDirectory('brands')
+                : this._getDimensionDirectory('channels');
+        const dimensionSelectedIds = dim => {
+            const list = this.filter[dimensionFilterKey(dim)];
+            return Array.isArray(list) ? list : [];
+        };
+        const normalizeDimension = dim => FILTER_DIMENSIONS.indexOf(dim) >= 0 ? dim : 'tag';
+        this._homeFilterMultiTab = normalizeDimension(this._homeFilterMultiTab);
+        const refreshListAfterFilterChange = () => {
             // v1.3.1-fix：用 refreshList 只刷新列表内容，不关闭下拉（支持多选标签）。
             // 之前误用 refreshMainContent → renderDock → _closeHomeFilterDropdown 会立即
             // 关闭下拉；且 applyFilter 的 normalizeTagIds ReferenceError 导致整个 dock 崩溃。
             try { this.refreshList(); } catch (err) { console.warn('[AssetManagement] refreshList failed:', err && err.message); }
         };
-        const renderTagDropdown = () => {
-            const selectedIds = Array.isArray(this.filter.tagIds) ? this.filter.tagIds : [];
-            const tags = this._getAssetTagCatalog();
-            const tagsHtml = tags.length
-                ? `<div class="am-home-filter-dropdown__tags">${tags.map(tag => {
-                    const isSelected = selectedIds.indexOf(tag.id) >= 0;
-                    /* v2.3.0 阶段3：筛选 chip 按 tag.color 上底色（模板表达式内禁用 // 行注释，concat 会并行使行注释吞代码） */
-                    const chipColor = this._tagChipColorAttrs(tag.color);
-                    return `<button type="button" class="am-home-filter-dropdown__tag${isSelected ? ' is-active' : ''}${chipColor.cls}" data-tag-id="${escapeHtml(tag.id)}" aria-pressed="${isSelected}"${chipColor.style}>
-                        <span>${escapeHtml(tag.label)}</span><span class="am-home-filter-dropdown__check" aria-hidden="true">${isSelected ? '✓' : ''}</span>
+        const updateDimFilter = (dimension, nextIds) => {
+            this.filter[dimensionFilterKey(dimension)] = Array.isArray(nextIds) ? nextIds : [];
+            // v2.6.4 筛选记忆：标签选择/清除/全选切换统一走此入口，一次写回。
+            this._rememberHomeFilters();
+            this._updateHomeFilterDropdownTrigger('tag');
+            renderDropdown();
+            refreshListAfterFilterChange();
+        };
+        /* 清除筛选覆盖三维度：一次写回快照 + 一次 refreshList，不逐维度三连触发。 */
+        const clearAllDimFilters = () => {
+            FILTER_DIMENSIONS.forEach(dim => { this.filter[dimensionFilterKey(dim)] = []; });
+            this._rememberHomeFilters();
+            this._updateHomeFilterDropdownTrigger('tag');
+            renderDropdown();
+            refreshListAfterFilterChange();
+        };
+        const renderMultiFilterDropdown = () => {
+            /* v2.6.5 阶段3b：标签 / 品牌 / 途径 三 tab。tab 容器复用报表维度分段控件样式
+               （.am-dashboard-analysis__tabs 无父容器耦合，亮暗两套齐全）；板块渲染、全选
+               切换、清除入口与原标签板块完全同构，仅数据源与 filter 键按维度解析。 */
+            const dim = normalizeDimension(this._homeFilterMultiTab);
+            const dimensionLabels = {
+                tag: this._t('filterTag', '标签'),
+                brand: this._t('reportDimensionTabBrand', '品牌'),
+                channel: this._t('reportDimensionTabChannel', '途径'),
+            };
+            const dimensionEmptyKeys = { tag: ['tagFilterEmpty', '暂无标签'], brand: ['filterBrandEmpty', '暂无品牌'], channel: ['filterChannelEmpty', '暂无途径'] };
+            const tabsHtml = `<div class="am-dashboard-analysis__tabs" role="tablist">${FILTER_DIMENSIONS.map(key => `<button type="button" role="tab" aria-selected="${key === dim ? 'true' : 'false'}" class="${key === dim ? 'is-active' : ''}" data-dim-tab="${key}">${escapeHtml(dimensionLabels[key])}</button>`).join('')}</div>`;
+            const selectedIds = dimensionSelectedIds(dim);
+            const entries = dimensionCatalog(dim);
+            const entriesHtml = entries.length
+                ? `<div class="am-home-filter-dropdown__tags">${entries.map(entry => {
+                    const isSelected = selectedIds.indexOf(entry.id) >= 0;
+                    /* v2.3.0 阶段3：筛选 chip 按 entry.color 上底色（模板表达式内禁用 // 行注释，concat 会并行使行注释吞代码） */
+                    const chipColor = this._tagChipColorAttrs(entry.color);
+                    return `<button type="button" class="am-home-filter-dropdown__tag${isSelected ? ' is-active' : ''}${chipColor.cls}" data-dim="${dim}" data-dim-entry-id="${escapeHtml(entry.id)}" aria-pressed="${isSelected}"${chipColor.style}>
+                        <span>${escapeHtml(entry.label)}</span><span class="am-home-filter-dropdown__check" aria-hidden="true">${isSelected ? '✓' : ''}</span>
                     </button>`;
                 }).join('')}</div>`
-                : `<div class="am-home-filter-dropdown__empty">${escapeHtml(this._t('tagFilterEmpty', '暂无标签'))}</div>`;
-            /* v2.3.0 阶段4.2：全选/取消全选合并为单个切换按钮——已选集合 == 全部标签（且目录非空）
+                : `<div class="am-home-filter-dropdown__empty">${escapeHtml(this._t(dimensionEmptyKeys[dim][0], dimensionEmptyKeys[dim][1]))}</div>`;
+            /* v2.3.0 阶段4.2：全选/取消全选合并为单个切换按钮——已选集合 == 全部条目（且目录非空）
                时显示「取消全选」（点击清空），否则显示「全选」（点击全选）。复用既有 i18n key
-               tagFilterSelectAll / tagFilterDeselectAll；updateTagFilter 会触发 renderDropdown 重绘，
+               tagFilterSelectAll / tagFilterDeselectAll；updateDimFilter 会触发 renderDropdown 重绘，
                按钮文案随状态天然更新。 */
-            const allSelected = tags.length > 0 && tags.every(tag => selectedIds.indexOf(tag.id) >= 0);
+            const allSelected = entries.length > 0 && entries.every(entry => selectedIds.indexOf(entry.id) >= 0);
             const toggleLabel = allSelected ? this._t('tagFilterDeselectAll', '取消全选') : this._t('tagFilterSelectAll', '全选');
-            return `<div class="am-home-filter-dropdown__header"><span>${escapeHtml(this._t('tagFilterTitle', '按标签筛选'))}</span><button type="button" class="am-home-filter-dropdown__clear" data-tag-clear>${escapeHtml(this._t('tagFilterClear', '清除筛选'))}</button></div>
-                <div class="am-home-filter-dropdown__tag-actions"><button type="button" data-tag-toggle-all>${escapeHtml(toggleLabel)}</button></div>${tagsHtml}`;
+            return `<div class="am-home-filter-dropdown__header"><span>${escapeHtml(this._t('filterChip', '筛选'))}</span><button type="button" class="am-home-filter-dropdown__clear" data-tag-clear>${escapeHtml(this._t('tagFilterClear', '清除筛选'))}</button></div>
+                ${tabsHtml}<div class="am-home-filter-dropdown__tag-actions"><button type="button" data-tag-toggle-all>${escapeHtml(toggleLabel)}</button></div>${entriesHtml}`;
         };
         const renderSingleDropdown = () => {
             const options = this._getHomeFilterDropdownOptions(kind);
@@ -4394,31 +4475,46 @@ const bindDropdownEvents = () => {
                 });
                 return;
             }
-            dropdown.querySelectorAll('[data-tag-id]').forEach(button => {
+            /* v2.6.5 阶段3b：tab 切换只改实例视图态并重绘面板（不写筛选、不 refreshList），
+               重开面板保持上次 tab。 */
+            dropdown.querySelectorAll('[data-dim-tab]').forEach(button => {
+                button.addEventListener('click', () => {
+                    try {
+                        this._homeFilterMultiTab = normalizeDimension(button.dataset.dimTab);
+                        renderDropdown();
+                    } catch (err) {
+                        console.warn('[AssetManagement] filter tab switch failed:', err && err.message);
+                    }
+                });
+                button.setAttribute('data-action', 'home-filter-dim-tab');
+            });
+            dropdown.querySelectorAll('[data-dim-entry-id]').forEach(button => {
                 button.addEventListener('click', e => {
                     try {
-                        const id = button.dataset.tagId;
+                        const id = button.dataset.dimEntryId;
+                        const dim = normalizeDimension(button.dataset.dim);
                         if (!id) return;
-                        const nextIds = Array.isArray(this.filter.tagIds) ? this.filter.tagIds.slice() : [];
+                        const nextIds = dimensionSelectedIds(dim).slice();
                         const index = nextIds.indexOf(id);
                         if (index >= 0) nextIds.splice(index, 1);
                         else nextIds.push(id);
-                        updateTagFilter(nextIds);
+                        updateDimFilter(dim, nextIds);
                     } catch (err) {
-                        console.warn('[AssetManagement] tag click failed:', err && err.message);
+                        console.warn('[AssetManagement] filter entry click failed:', err && err.message);
                     }
                 });
                 button.setAttribute('data-action', 'home-tag-pick');
             });
             const clear = dropdown.querySelector('[data-tag-clear]');
-            if (clear) { clear.addEventListener('click', () => { try { updateTagFilter([]); } catch (err) { console.warn('[AssetManagement] tag clear failed:', err && err.message); } }); clear.setAttribute('data-action', 'home-tag-clear'); }
+            if (clear) { clear.addEventListener('click', () => { try { clearAllDimFilters(); } catch (err) { console.warn('[AssetManagement] filter clear failed:', err && err.message); } }); clear.setAttribute('data-action', 'home-tag-clear'); }
             /* v2.3.0 阶段4.2：单个全选切换按钮——点击时按当前状态判定：已全选则清空，否则全选。
-               判定口径与 renderTagDropdown 的文案口径一致（已选集合 ⊇ 目录全部 id 且目录非空）。 */
+               判定口径与 renderMultiFilterDropdown 的文案口径一致（已选集合 ⊇ 当前 tab 目录全部
+               id 且目录非空）；v2.6.5 阶段3b 起作用于当前 tab 维度。 */
             const toggleAll = dropdown.querySelector('[data-tag-toggle-all]');
-            if (toggleAll) { toggleAll.addEventListener('click', () => { try { const catalog = this._getAssetTagCatalog(); const selectedIds = Array.isArray(this.filter.tagIds) ? this.filter.tagIds : []; const allSelected = catalog.length > 0 && catalog.every(tag => selectedIds.indexOf(tag.id) >= 0); updateTagFilter(allSelected ? [] : catalog.map(tag => tag.id)); } catch (err) { console.warn('[AssetManagement] tag toggleAll failed:', err && err.message); } }); toggleAll.setAttribute('data-action', 'home-tag-toggle-all'); }
+            if (toggleAll) { toggleAll.addEventListener('click', () => { try { const dim = normalizeDimension(this._homeFilterMultiTab); const catalog = dimensionCatalog(dim); const selectedIds = dimensionSelectedIds(dim); const allSelected = catalog.length > 0 && catalog.every(entry => selectedIds.indexOf(entry.id) >= 0); updateDimFilter(dim, allSelected ? [] : catalog.map(entry => entry.id)); } catch (err) { console.warn('[AssetManagement] filter toggleAll failed:', err && err.message); } }); toggleAll.setAttribute('data-action', 'home-tag-toggle-all'); }
         };
         const renderDropdown = () => {
-            dropdown.innerHTML = kind === 'tag' ? renderTagDropdown() : renderSingleDropdown();
+            dropdown.innerHTML = kind === 'tag' ? renderMultiFilterDropdown() : renderSingleDropdown();
             bindDropdownEvents();
             positionDropdown();
         };
@@ -4714,9 +4810,35 @@ const bindDropdownEvents = () => {
         const countBars = kindCount.length ? `<div class="am-dashboard-bars">${kindCount.map(item => `<div class="am-bar-hit" data-action="dashboard-kind" data-kind="${escapeHtml(item.kind)}" title="${escapeHtml(this._t('dashboardBarTapHint', '点击查看明细'))}"><span>${escapeHtml(this._formalKindLabel(item.kind))}</span><strong>${item.value}</strong><i style="width:${(item.value / countMax * 100).toFixed(1)}%"></i></div>`).join('')}</div>` : this._renderFormalDashboardEmpty();
         const amountBars = kindAmount.length ? `<div class="am-dashboard-bars">${kindAmount.map(item => `<div class="am-bar-hit" data-action="dashboard-kind" data-kind="${escapeHtml(item.kind)}" title="${escapeHtml(this._t('dashboardBarTapHint', '点击查看明细'))}"><span>${escapeHtml(this._formalKindLabel(item.kind))}</span><strong>${formatAmountMinor(item.value, 'CNY')}</strong><i style="width:${(item.value / amountMax * 100).toFixed(1)}%"></i></div>`).join('')}</div>` : this._renderFormalDashboardEmpty();
         // 标签排行：只列有资产引用的标签，按聚合购入金额（折 CNY）从高到低；无任何带标签资产则不渲染。
-        const tagAmount = this._reportTagAmountCny(report);
+        // v2.6.5 阶段3c：受 settings.reportShowTagRank 控制（缺键按 true = 默认显示）。
+        const showTagRank = this.settings && this.settings.reportShowTagRank !== false;
+        const tagAmount = showTagRank ? this._reportTagAmountCny(report) : [];
         const tagMax = Math.max(1, ...tagAmount.map(item => item.value));
         const tagBars = tagAmount.length ? `<div class="am-dashboard-bars">${tagAmount.map(item => `<div class="am-bar-hit" data-action="dashboard-tag" data-tag="${escapeHtml(item.tagId)}" title="${escapeHtml(this._t('dashboardBarTapHint', '点击查看明细'))}"><span>${escapeHtml(item.label)}</span><strong>${formatAmountMinor(item.value, 'CNY')}</strong><i style="width:${(item.value / tagMax * 100).toFixed(1)}%"></i></div>`).join('')}</div>` : '';
+        // v2.6.5 阶段3a：维度分析卡（品牌 / 途径 tab 切换，独立 tab 态）。金额折 CNY 聚合
+        // 在 UI 层完成（报表契约只聚合计数与资产 id）；两个维度都无任何已设置条目时整卡
+        // 不渲染（同 tagBars 空不渲染模式）。未设置维度条目的资产归入列表末尾「未设置」行。
+        const dimensionBrandRows = this._reportDimensionRowsCny(report, 'brand');
+        const dimensionChannelRows = this._reportDimensionRowsCny(report, 'channel');
+        // v2.6.5 阶段3c：报表板块显示开关（settings.reportShowBrandRank / reportShowChannelRank，
+        // 缺键按 true 处理 = 默认显示）。品牌/途径开关全关时 dimensionTabs 为空 → 整卡不渲染；
+        // 单关时对应 tab 从可用集剔除（未设置行随 tab 一起消失）。
+        const showBrandRank = this.settings && this.settings.reportShowBrandRank !== false;
+        const showChannelRank = this.settings && this.settings.reportShowChannelRank !== false;
+        const dimensionTabs = [];
+        if (showBrandRank && dimensionBrandRows.some(row => !row.isUnset)) dimensionTabs.push('brand');
+        if (showChannelRank && dimensionChannelRows.some(row => !row.isUnset)) dimensionTabs.push('channel');
+        this._reportDimensionTabsCache = dimensionTabs;
+        const dimensionTab = dimensionTabs.indexOf(this._reportDimensionTab) >= 0 ? this._reportDimensionTab : dimensionTabs[0];
+        const dimensionRows = dimensionTab === 'channel' ? dimensionChannelRows : dimensionBrandRows;
+        const dimensionMax = Math.max(1, ...dimensionRows.map(item => item.value));
+        const dimensionRowsHtml = dimensionRows.map(row => `<div class="am-bar-hit" data-action="dashboard-${dimensionTab}"${row.isUnset ? '' : ` data-${dimensionTab}="${escapeHtml(row.id)}"`} title="${escapeHtml(this._t('dashboardBarTapHint', '点击查看明细'))}"><span>${!row.isUnset && row.color ? `<span class="am-tag-popover__option-color" style="display:inline-block;vertical-align:middle;margin-right:6px;background:${escapeHtml(row.color)}"></span>` : ''}${escapeHtml(row.label)}</span><strong>${formatAmountMinor(row.value, 'CNY')}<small> · ${row.count}</small></strong><i style="width:${(row.value / dimensionMax * 100).toFixed(1)}%"></i></div>`).join('');
+        const dimensionTabsHtml = dimensionTabs.length >= 2 ? `<div class="am-dashboard-analysis__tabs" role="tablist">${dimensionTabs.map(tab => {
+            const isActive = tab === dimensionTab;
+            const tabLabel = tab === 'brand' ? this._t('reportDimensionTabBrand', '品牌') : this._t('reportDimensionTabChannel', '途径');
+            return `<button type="button" role="tab" aria-selected="${isActive ? 'true' : 'false'}" class="${isActive ? 'is-active' : ''}" data-action="report-dimension-tab" data-dimension="${tab}">${escapeHtml(tabLabel)}</button>`;
+        }).join('')}</div>` : '';
+        const dimensionHtml = dimensionTabs.length ? `<section class="am-dashboard__surface am-dashboard-dimension"><div class="am-dashboard-analysis__head"><h3>${escapeHtml(this._t('dashboardDimensionTitle', '维度分析'))}</h3>${dimensionTabsHtml}</div><p>${escapeHtml(this._t('dashboardDimensionMeta', '按品牌 / 途径聚合购入金额（折合 ¥）'))}</p><div class="am-dashboard-bars">${dimensionRowsHtml}</div></section>` : '';
         // 产品价格排行：沿用按币种分组、净成本降序；点击改 data-action="card" 复用资产产品卡。
         const rankings = Object.entries(report.rankings.byCurrency || {}).length ? `<div class="am-dashboard-ranking">${Object.entries(report.rankings.byCurrency).map(([currency, items]) => `<div><h4>${escapeHtml(currency)}</h4>${items.slice(0, 5).map((item, index) => `<button type="button" class="am-dashboard-asset-row" data-action="card" data-id="${escapeHtml(item.assetId)}"><i>${index + 1}</i><span>${escapeHtml(item.name)}</span><strong>${formatAmountMinor(item.netAmountMinor, currency)}${this._cnyApproxHtml(item.netAmountMinor, currency)}</strong></button>`).join('')}</div>`).join('')}</div>` : this._renderFormalDashboardEmpty();
         return `<div class="am-dashboard">
@@ -4724,6 +4846,7 @@ const bindDropdownEvents = () => {
              ${expiringHtml}
              ${analysisHtml}
             <section class="am-dashboard__surface am-dashboard-composition"><h3>${escapeHtml(this._t('dashboardCategoryTitle', '分类排行'))}</h3><div class="am-dashboard-catcols"><div class="am-dashboard-catcol"><span class="am-dashboard-catcol__title">${escapeHtml(this._t('dashboardCategoryCountTitle', '按数量'))}</span>${countBars}</div><div class="am-dashboard-catcol"><span class="am-dashboard-catcol__title">${escapeHtml(this._t('dashboardCategoryAmountTitle', '按金额'))}<small>${escapeHtml(this._t('dashboardCategoryAmountMeta', '折合 ¥'))}</small></span>${amountBars}</div></div></section>
+             ${dimensionHtml}
             ${tagBars ? `<section class="am-dashboard__surface am-dashboard-tags"><h3>${escapeHtml(this._t('dashboardTagTitle', '标签排行'))}</h3><p>${escapeHtml(this._t('dashboardTagAmountMeta', '按标签聚合购入金额（折合 ¥）'))}</p>${tagBars}</section>` : ''}
             <section class="am-dashboard__surface am-dashboard-trend-section"><h3>${escapeHtml(this._t('dashboardTrendAmountTitle', '金额趋势'))}</h3><p>${escapeHtml(this._t('dashboardTrendAmountMeta', '近 12 个月购入金额（折合 ¥）'))}</p>${trendSvg}</section>
             <section class="am-dashboard__surface"><h3>${escapeHtml(this._t('dashboardRankingTitle', '价格排行'))}</h3>${rankings}</section>
@@ -5118,8 +5241,51 @@ const snapshot = this._formalDomainStateSnapshot || {
         }).filter(Boolean).sort((a, b) => b.value - a.value);
     }
 
+    /** v2.6.5 阶段3a：维度分析（品牌 / 途径）取数。report.brand.byId / channel.byId 只
+     *  聚合资产计数与资产 id（金额聚合不进报表契约），本层逐卡把购入金额折 CNY 求和并
+     *  按金额降序。label / color 从目录缓存（this._brands / this._channels）反查；目录
+     *  已删条目不展示（悬挂引用资产也不计入「未设置」桶——它们已设置过维度，只是目录
+     *  缺失）。存在未设置该维度的报表内资产时，列表末尾追加「未设置」行（无 swatch）。
+     *  行结构：{ id, label, color, value, count, isUnset }。 */
+    _reportDimensionRowsCny(report, dimension) {
+        const byId = (report && report[dimension] && report[dimension].byId) || {};
+        const rates = this._getExchangeRates();
+        const cardById = new Map((report.assets || []).map(card => [card && card.id, card]));
+        const cardCny = card => this._reportMinorToCny(card && card.financials && card.financials.acquisitionAmountMinor, card && card.currency, rates);
+        const catalog = dimension === 'channel' ? (Array.isArray(this._channels) ? this._channels : []) : (Array.isArray(this._brands) ? this._brands : []);
+        const assigned = new Set();
+        Object.keys(byId).forEach(id => {
+            const assetIds = byId[id] && Array.isArray(byId[id].assetIds) ? byId[id].assetIds : [];
+            assetIds.forEach(assetId => assigned.add(assetId));
+        });
+        const rows = Object.keys(byId).map(id => {
+            const meta = catalog.find(entry => entry && entry.id === id);
+            const label = meta && String(meta.label || '').trim();
+            if (!label) return null;
+            const assetIds = byId[id] && Array.isArray(byId[id].assetIds) ? byId[id].assetIds : [];
+            let value = 0;
+            assetIds.forEach(assetId => {
+                const card = cardById.get(assetId);
+                if (card) value += cardCny(card);
+            });
+            return { id: id, label: label, color: typeof meta.color === 'string' ? meta.color : '',
+                value: value, count: Number(byId[id] && byId[id].count) || 0, isUnset: false };
+        }).filter(Boolean);
+        let unsetValue = 0, unsetCount = 0;
+        (report.assets || []).forEach(card => {
+            if (!card || assigned.has(card.id)) return;
+            unsetValue += cardCny(card);
+            unsetCount += 1;
+        });
+        rows.sort((a, b) => b.value - a.value);
+        if (unsetCount > 0) rows.push({ id: '', label: this._t('dashboardDimensionUnset', '未设置'),
+            color: '', value: unsetValue, count: unsetCount, isUnset: true });
+        return rows;
+    }
+
     /** v2.1：报表互动——点击分类/标签排行弹出该分组下的产品明细（按购入金额折 CNY 降序）。
-     *  opts = { kind } 或 { tagId }。行内点击复用资产产品卡。纯展示，不写存储。 */
+     *  opts = { kind } / { tagId } / { dimension, dimensionId }（v2.6.5 阶段3a：品牌 / 途径，
+     *  dimensionId 为空 = 「未设置」桶）。行内点击复用资产产品卡。纯展示，不写存储。 */
     _openReportBreakdown(opts) {
         let report;
         try { report = this._buildFullFormalReport(this._formalDomainSnapshot()); }
@@ -5135,6 +5301,27 @@ const snapshot = this._formalDomainStateSnapshot || {
         } else if (opts && opts.kind) {
             title = this._formalKindLabel(opts.kind);
             list = cards.filter(card => card.kind === opts.kind);
+        } else if (opts && opts.dimension) {
+            // v2.6.5 阶段3a：品牌 / 途径维度明细。口径与维度分析卡完全一致：
+            // 已设置条目 = report.brand.byId / channel.byId 的 assetIds；未设置桶 =
+            // 报表内资产减去全部已归入资产（含目录条目已删的悬挂引用）。
+            const dimension = opts.dimension === 'channel' ? 'channel' : 'brand';
+            const byId = (report[dimension] && report[dimension].byId) || {};
+            const assignedIds = new Set();
+            Object.keys(byId).forEach(id => {
+                const assetIds = byId[id] && Array.isArray(byId[id].assetIds) ? byId[id].assetIds : [];
+                assetIds.forEach(assetId => assignedIds.add(assetId));
+            });
+            if (opts.dimensionId) {
+                const catalog = dimension === 'channel' ? (Array.isArray(this._channels) ? this._channels : []) : (Array.isArray(this._brands) ? this._brands : []);
+                const meta = catalog.find(entry => entry && entry.id === opts.dimensionId);
+                title = (meta && String(meta.label || '').trim()) || this._t('dashboardDimensionUnset', '未设置');
+                const entryAssetIds = byId[opts.dimensionId] && Array.isArray(byId[opts.dimensionId].assetIds) ? byId[opts.dimensionId].assetIds : [];
+                list = cards.filter(card => entryAssetIds.indexOf(card.id) >= 0);
+            } else {
+                title = this._t('dashboardDimensionUnset', '未设置');
+                list = cards.filter(card => !assignedIds.has(card.id));
+            }
         } else if (opts && opts.subscriptionState) {
             // v2.6.3 补充：订阅分析状态清单。分桶口径与报表 byState 完全一致
             //（只在役订阅卡；试用优先于状态；已停订 = expired + pendingConfirmation）。
@@ -5732,6 +5919,21 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
             case "tab-add": this.openActionSheet(); break;
             case "dashboard-kind": this._openReportBreakdown({ kind: target.dataset.kind }); break;
             case "dashboard-tag": this._openReportBreakdown({ tagId: target.dataset.tag }); break;
+            // v2.6.5 阶段3a：维度分析条目点击 → 品牌 / 途径明细弹层。未设置行不携带
+            // data-brand / data-channel 属性（dataset 取值 undefined → 空串 → 未设置桶）。
+            case "dashboard-brand": this._openReportBreakdown({ dimension: 'brand', dimensionId: target.dataset.brand || '' }); break;
+            case "dashboard-channel": this._openReportBreakdown({ dimension: 'channel', dimensionId: target.dataset.channel || '' }); break;
+            case "report-dimension-tab": {
+                // v2.6.5 阶段3a：维度分析卡 tab 切换（独立 tab 态）。只接受 brand / channel
+                // 枚举内且当轮渲染可用的维度（可用集由 renderReportPage 缓存）；刷新方式同
+                // report-analysis-tab。
+                const dimension = target.dataset.dimension;
+                if (['brand', 'channel'].indexOf(dimension) >= 0 && (this._reportDimensionTabsCache || []).indexOf(dimension) >= 0) {
+                    this._reportDimensionTab = dimension;
+                    this.refreshMainContent();
+                }
+                break;
+            }
             case "report-sub-state":
                 // v2.6.3 补充：订阅分析状态格点击 → 对应状态订阅产品清单弹层。
                 this._openReportBreakdown({ subscriptionState: target.dataset.state });
@@ -6062,6 +6264,19 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
     }
 
     /**
+     * v2.6.5 阶段3c：品牌 / 途径目录条目引用计数（镜像 _getTagReferenceCount 形态）。
+     * kind = 'brands' 按 asset.brandId 统计；kind = 'channels' 按 asset.channelId 统计。
+     */
+    _getDimensionReferenceCount(kind, entryId) {
+        const target = String(entryId || '').trim().toLowerCase();
+        if (!target) return 0;
+        const refKey = kind === 'brands' ? 'brandId' : 'channelId';
+        return (Array.isArray(this.assets) ? this.assets : []).filter(asset =>
+            String((asset && asset[refKey]) || '').trim().toLowerCase() === target
+        ).length;
+    }
+
+    /**
      * v0.17-T1-β：M12 新建一个用户 tag（system tag 不可手动新建）。
      *   - id 自增：'tag_user_<timestamp>_<rand>'
      *   - isSystem = false
@@ -6183,6 +6398,140 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
         });
         return result;
     }
+
+    // ==================== v2.6.5 阶段2a：品牌 / 入手途径目录（dimensions.json）====================
+
+    /**
+     * v2.6.5 阶段2a：品牌 / 入手途径展示目录。条目结构与标签目录一致
+     * （id/label/color/emoji/createdAt），双目录各自独立大小写不敏感唯一。
+     *   - 内存缓存 this._brands / this._channels 由 loadAssets 导入、备份导入、
+     *     formal reset 与 _commitAssetAuditMutation 事务统一回写（与 this._tags 同模式）
+     *   - create/delete/update 走 _commitAssetAuditMutation 事务：dimensions.json +
+     *     opLog（brand / channel 前缀审计类型与 tag 同构，storage 侧校验）
+     */
+    _getDimensionDirectory(kind) {
+        const list = kind === 'brands' ? this._brands : (kind === 'channels' ? this._channels : null);
+        if (!Array.isArray(list)) return [];
+        return list.filter(entry => entry && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(entry.id) && String(entry.label || '').trim())
+            .map(entry => Object.assign({}, entry, { id: String(entry.id).toLowerCase(), label: String(entry.label).trim() }))
+            .sort((left, right) => left.label.localeCompare(right.label));
+    }
+
+    /** v2.6.5 阶段2a：按 id 查找目录条目（kind = 'brands' | 'channels'），找不到返回 null */
+    _getDimensionEntryById(kind, entryId) {
+        if (!entryId) return null;
+        const target = String(entryId).trim().toLowerCase();
+        return this._getDimensionDirectory(kind).find(entry => entry.id === target) || null;
+    }
+
+    _dimensionAuditPrefix(kind) { return kind === 'brands' ? 'brand' : 'channel'; }
+
+    /** v2.6.5 阶段2a：新建目录条目（trim、≤20 字符、同目录大小写不敏感唯一），返回新条目 */
+    async _createDimensionEntry(kind, label) {
+        const safeLabel = String(label || '').trim().slice(0, 20);
+        const kindLabel = kind === 'brands' ? this._t('brandFieldLabel', '品牌名') : this._t('channelFieldLabel', '入手途径名');
+        if (!safeLabel) throw new Error(kindLabel + ' is required');
+        if (!this.storage || typeof this.storage.mutateFormalAssetDomain !== 'function') {
+            throw new Error('[AssetManagement] formal dimension storage unavailable');
+        }
+        const prefix = this._dimensionAuditPrefix(kind);
+        const duplicateKey = kind === 'brands' ? 'brandDuplicate' : 'channelDuplicate';
+        const duplicateText = kind === 'brands' ? '品牌名称已存在' : '入手途径名称已存在';
+        let created;
+        const context = await this._commitAssetAuditMutation(snapshot => {
+            const wrapper = snapshot.dimensions || {};
+            const brands = Array.isArray(wrapper.brands) ? wrapper.brands : [];
+            const channels = Array.isArray(wrapper.channels) ? wrapper.channels : [];
+            const directory = kind === 'brands' ? brands : channels;
+            if (directory.some(entry => entry && String(entry.label || '').trim().toLowerCase() === safeLabel.toLowerCase())) {
+                throw new Error(this._t(duplicateKey, duplicateText));
+            }
+            created = { id: createStableId(), label: safeLabel, createdAt: new Date().toISOString() };
+            const log = { id: createStableId(), type: prefix + '-create', assetId: created.id, assetName: created.label,
+                field: null, oldValue: null, newValue: this._cloneForSnapshot(created), ts: new Date().toISOString() };
+            const nextDimensions = kind === 'brands'
+                ? { brands: brands.concat(created), channels: channels }
+                : { brands: brands, channels: channels.concat(created) };
+            return { dimensions: nextDimensions, operationLogs: [log].concat(snapshot.operationLogs || []), context: { entry: created } };
+        });
+        return context.entry;
+    }
+
+    /**
+     * v2.6.5 阶段2a：删除目录条目。删除保护 = 被任何资产引用（asset.brandId /
+     * asset.channelId）时抛错；返回 boolean。
+     */
+    async _deleteDimensionEntry(kind, entryId) {
+        if (!entryId) return false;
+        if (!this.storage || typeof this.storage.mutateFormalAssetDomain !== 'function') {
+            throw new Error('[AssetManagement] formal dimension storage unavailable');
+        }
+        const target = String(entryId).trim().toLowerCase();
+        const refKey = kind === 'brands' ? 'brandId' : 'channelId';
+        const prefix = this._dimensionAuditPrefix(kind);
+        const referencedKey = kind === 'brands' ? 'brandDeleteReferenced' : 'channelDeleteReferenced';
+        const referencedText = kind === 'brands' ? '该品牌仍被资产引用，无法删除' : '该入手途径仍被资产引用，无法删除';
+        const context = await this._commitAssetAuditMutation(snapshot => {
+            const wrapper = snapshot.dimensions || {};
+            const brands = Array.isArray(wrapper.brands) ? wrapper.brands : [];
+            const channels = Array.isArray(wrapper.channels) ? wrapper.channels : [];
+            const directory = kind === 'brands' ? brands : channels;
+            const entry = directory.find(item => item && String(item.id || '').toLowerCase() === target);
+            if (!entry) return { noop: true, context: { deleted: false } };
+            if (snapshot.assets.some(asset => String((asset && asset[refKey]) || '').toLowerCase() === target)) {
+                throw new Error(this._t(referencedKey, referencedText));
+            }
+            const log = { id: createStableId(), type: prefix + '-delete', assetId: entry.id, assetName: entry.label,
+                field: null, oldValue: this._cloneForSnapshot(entry), newValue: null, ts: new Date().toISOString() };
+            const nextDimensions = kind === 'brands'
+                ? { brands: brands.filter(item => !item || String(item.id || '').toLowerCase() !== target), channels: channels }
+                : { brands: brands, channels: channels.filter(item => !item || String(item.id || '').toLowerCase() !== target) };
+            return { dimensions: nextDimensions, operationLogs: [log].concat(snapshot.operationLogs || []), context: { deleted: true } };
+        });
+        return !!(context && context.deleted);
+    }
+
+    /** v2.6.5 阶段2a：目录条目颜色更新（镜像 updateTag 的 color 路径），返回 boolean */
+    async _updateDimensionColor(kind, entryId, color) {
+        if (!entryId || typeof color !== 'string') return false;
+        if (!this.storage || typeof this.storage.mutateFormalAssetDomain !== 'function') {
+            throw new Error('[AssetManagement] formal dimension storage unavailable');
+        }
+        const normalized = this._normalizeTagColorInput(color);
+        const target = String(entryId).trim().toLowerCase();
+        const prefix = this._dimensionAuditPrefix(kind);
+        const context = await this._commitAssetAuditMutation(snapshot => {
+            const wrapper = snapshot.dimensions || {};
+            const brands = Array.isArray(wrapper.brands) ? wrapper.brands : [];
+            const channels = Array.isArray(wrapper.channels) ? wrapper.channels : [];
+            const directory = kind === 'brands' ? brands : channels;
+            const entry = directory.find(item => item && String(item.id || '').toLowerCase() === target);
+            if (!entry) return { noop: true, context: { updated: false } };
+            const oldValue = typeof entry.color === 'string' ? entry.color : '';
+            if (oldValue === normalized) return { noop: true, context: { updated: false, unchanged: true } };
+            const updated = Object.assign({}, entry, { color: normalized });
+            const log = { id: createStableId(), type: prefix + '-update', assetId: entry.id, assetName: entry.label,
+                field: 'color', oldValue: oldValue, newValue: normalized, ts: new Date().toISOString() };
+            const nextDirectory = directory.map(item => (item && String(item.id || '').toLowerCase() === target ? updated : item));
+            const nextDimensions = kind === 'brands'
+                ? { brands: nextDirectory, channels: channels }
+                : { brands: brands, channels: nextDirectory };
+            return { dimensions: nextDimensions, operationLogs: [log].concat(snapshot.operationLogs || []), context: { updated: true, entry: updated } };
+        });
+        return !!(context && context.updated);
+    }
+
+    /** v2.6.5 阶段2a：品牌目录对外方法（镜像 createTag/deleteTag/updateTag 形态） */
+    async createBrand(options) { return this._createDimensionEntry('brands', (options || {}).label); }
+    async deleteBrand(brandId) { return this._deleteDimensionEntry('brands', brandId); }
+    async updateBrandColor(brandId, color) { return this._updateDimensionColor('brands', brandId, color); }
+    getBrandById(brandId) { return this._getDimensionEntryById('brands', brandId); }
+
+    /** v2.6.5 阶段2a：入手途径目录对外方法（镜像 createTag/deleteTag/updateTag 形态） */
+    async createChannel(options) { return this._createDimensionEntry('channels', (options || {}).label); }
+    async deleteChannel(channelId) { return this._deleteDimensionEntry('channels', channelId); }
+    async updateChannelColor(channelId, color) { return this._updateDimensionColor('channels', channelId, color); }
+    getChannelById(channelId) { return this._getDimensionEntryById('channels', channelId); }
 
     _renderTagSelectorHtml(state, options) {
         options = options || {};
@@ -6527,9 +6876,11 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
      * @param {Object} tag 标签对象（至少 id / color）
      * @param {HTMLElement} anchor 锚点元素（行内 swatch 按钮），用于 fixed 定位
      * @param {Function} onPicked 选中回调，参数为归一化 6 位 hex 或 ''（清除）
+     * @param {string} [pickerTitle] v2.6.5 阶段3c：可选面板标题（品牌/途径目录复用时传入，缺省为「标签颜色」）
      */
-    async _openTagColorPicker(tag, anchor, onPicked) {
+    async _openTagColorPicker(tag, anchor, onPicked, pickerTitle) {
         const self = this;
+        const pickerTitleText = pickerTitle || this._t('tagColorPickerTitle', '标签颜色');
         if (!tag || !anchor) return;
         this._closeTagColorPicker();
         let customColors = [];
@@ -6561,7 +6912,7 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
         panel.className = 'am-tag-color-picker';
         panel.setAttribute('data-tag-color-picker', '');
         panel.setAttribute('role', 'dialog');
-        panel.innerHTML = '<div class="am-tag-color-picker__header"><span class="am-tag-color-picker__title">' + escapeHtml(this._t('tagColorPickerTitle', '标签颜色')) + '</span><button type="button" class="am-tag-color-picker__close" data-tcp-action="close" aria-label="' + escapeHtml(this._t('btnClose', '关闭')) + '">×</button></div>'
+        panel.innerHTML = '<div class="am-tag-color-picker__header"><span class="am-tag-color-picker__title">' + escapeHtml(pickerTitleText) + '</span><button type="button" class="am-tag-color-picker__close" data-tcp-action="close" aria-label="' + escapeHtml(this._t('btnClose', '关闭')) + '">×</button></div>'
             + '<button type="button" class="am-tag-color-picker__none' + (currentColor === '' ? ' is-selected' : '') + '" data-tcp-action="none"><span class="am-tag-color-picker__none-icon" aria-hidden="true"></span>' + escapeHtml(this._t('tagColorNone', '无颜色')) + '</button>'
             + '<div class="am-tag-color-picker__grid">' + cellsHtml + '</div>'
             + '<div class="am-tag-color-picker__custom-label">' + escapeHtml(this._t('tagColorCustom', '自定义颜色')) + '</div>'
@@ -9732,7 +10083,7 @@ closeProductCard() {
                     <button class="am-settings__tab am-settings__tab--active" data-tab="general">${escapeHtml(this._t("settingsTabGeneral", "常规"))}</button>
                     <button class="am-settings__tab" data-tab="data">${escapeHtml(this._t("settingsTabData", "数据"))}</button>
                     <button class="am-settings__tab" data-tab="ai">${escapeHtml(this._t("settingsTabAI", "AI"))}</button>
-                    <button class="am-settings__tab" data-settings-tab="tags" data-tab="tags">${escapeHtml(this._t("settingsTagsTitle", "标签"))}</button>
+                    <button class="am-settings__tab" data-settings-tab="tags" data-tab="tags">${escapeHtml(this._t("settingsCatalogTitle", "目录管理"))}</button>
                     <button class="am-settings__tab" data-settings-tab="logs" data-tab="logs">${escapeHtml(this._t("opLogTitle", "操作日志"))}</button>
                     <button class="am-settings__tab" data-tab="about">${escapeHtml(this._t("settingsTabAbout", "关于"))}</button>
                 </div>
@@ -9757,6 +10108,9 @@ closeProductCard() {
             dialog.destroy = () => {
                 this._invalidateNoteIndexSettings(root);
                 this._closeSettingsClearAllAssetsConfirm(root);
+                // v2.6.5 阶段3c：目录管理子 tab 的删除确认弹窗挂在本弹窗根节点上，
+                // 关闭设置时同步清理，避免 _scopedConfirmByHost 残留死引用。
+                this._closeScopedConfirm(root);
                 return originalDestroy();
             };
         }, this.isMobile ? "100vw" : "720px");
@@ -9871,6 +10225,20 @@ closeProductCard() {
                     this._applyMatrixColsPreference();
                 };
             });
+            // v2.6.5 阶段3c：报表板块显示开关（标签 / 品牌 / 途径排行）。
+            // saveSettings 内部 Object.assign 合并（禁止整体覆写——v0.14 教训）；
+            // 缺键按 true 处理，勾选即时保存并刷新报表页生效。
+            root.querySelectorAll('[name="reportShowTagRank"], [name="reportShowBrandRank"], [name="reportShowChannelRank"]').forEach(el => {
+                el.onchange = async () => {
+                    const saved = await this.saveSettings({ [el.name]: el.checked === true });
+                    if (!saved) {
+                        el.checked = this.settings[el.name] !== false;
+                        this.showToast('⚠️ ' + this._t('settingsSaveFail', '设置保存失败'));
+                        return;
+                    }
+                    this.renderDock();
+                };
+            });
             // v2.6.4 P2：汇率设置重构——自动更新开关 + 刷新/恢复按钮 + 三币种手动修正。
             // 手动保存：用户填 X（1 外币 = X CNY）→ rates[cur] = 1/X 合并进当前 rates，
             // 整体替换写入（source='manual'）→ 更新缓存 → 刷新首页 → restoreTab 局部反馈。
@@ -9952,6 +10320,17 @@ closeProductCard() {
         }
         if (tab === 'ai') this.bindSettingsAI(root);
         if (tab === 'tags') {
+            // v2.6.5 阶段3c：目录管理 3 子 tab（标签 / 品牌 / 途径）切换。
+            // 切换前先关掉挂在本弹窗上的确认弹窗，避免 restoreTab 后残留幽灵遮罩。
+            root.querySelectorAll('[data-settings-catalog-tab]').forEach(btn => {
+                btn.onclick = () => {
+                    const nextTab = btn.dataset.settingsCatalogTab;
+                    if (!nextTab || nextTab === this._settingsCatalogTab) return;
+                    this._closeScopedConfirm(root);
+                    this._settingsCatalogTab = nextTab;
+                    restoreTab();
+                };
+            });
             const create = root.querySelector('[data-action="settings-create-tag"]');
             if (create) create.onclick = async () => {
                 const input = root.querySelector('[name="settingsTagLabel"]');
@@ -9984,6 +10363,67 @@ closeProductCard() {
                             this.showToast('⚠️ ' + String(error && error.message || error));
                         }
                     });
+                };
+            });
+            // v2.6.5 阶段3c：品牌 / 途径子 tab —— 创建 / 删除（确认弹窗，文案区分维度）/
+            // swatch 换色，全部走阶段 2a 服务方法，成功后 restoreTab 刷新本区。
+            const dimensionCreateSpecs = [
+                ['settings-create-brand', 'settingsBrandLabel', options => this.createBrand(options)],
+                ['settings-create-channel', 'settingsChannelLabel', options => this.createChannel(options)],
+            ];
+            dimensionCreateSpecs.forEach(([action, inputName, createEntry]) => {
+                const button = root.querySelector(`[data-action="${action}"]`);
+                if (button) button.onclick = async () => {
+                    const input = root.querySelector(`[name="${inputName}"]`);
+                    try {
+                        await createEntry({ label: input ? input.value : '' });
+                        restoreTab();
+                    } catch (error) {
+                        this.showToast('⚠️ ' + String(error && error.message || error));
+                    }
+                };
+            });
+            root.querySelectorAll('[data-settings-entry-delete]').forEach(button => {
+                button.onclick = () => {
+                    const kind = button.dataset.entryKind === 'channels' ? 'channels' : 'brands';
+                    const entryId = button.dataset.settingsEntryDelete;
+                    const entry = kind === 'brands' ? this.getBrandById(entryId) : this.getChannelById(entryId);
+                    if (!entry) return;
+                    const isBrand = kind === 'brands';
+                    this._openScopedConfirm(root, {
+                        title: this._t(isBrand ? 'settingsDeleteBrandConfirmTitle' : 'settingsDeleteChannelConfirmTitle',
+                            isBrand ? '删除品牌' : '删除途径'),
+                        text: this._t(isBrand ? 'settingsDeleteBrandConfirmText' : 'settingsDeleteChannelConfirmText',
+                            isBrand ? '确定删除品牌「{label}」吗？此操作不可撤销。' : '确定删除途径「{label}」吗？此操作不可撤销。',
+                            { label: entry.label }),
+                        onConfirm: async () => {
+                            try {
+                                const deleted = isBrand ? await this.deleteBrand(entryId) : await this.deleteChannel(entryId);
+                                if (deleted) restoreTab();
+                            } catch (error) {
+                                this.showToast('⚠️ ' + String(error && error.message || error));
+                            }
+                        },
+                    });
+                };
+            });
+            root.querySelectorAll('[data-settings-entry-color]').forEach(button => {
+                button.onclick = () => {
+                    const kind = button.dataset.entryKind === 'channels' ? 'channels' : 'brands';
+                    const entryId = button.dataset.settingsEntryColor;
+                    const entry = kind === 'brands' ? this.getBrandById(entryId) : this.getChannelById(entryId);
+                    if (!entry) return;
+                    const isBrand = kind === 'brands';
+                    this._openTagColorPicker(entry, button, async (color) => {
+                        try {
+                            if (isBrand) await this.updateBrandColor(entryId, color);
+                            else await this.updateChannelColor(entryId, color);
+                            restoreTab();
+                        } catch (error) {
+                            this.showToast('⚠️ ' + String(error && error.message || error));
+                        }
+                    }, this._t(isBrand ? 'brandColorPickerTitle' : 'channelColorPickerTitle',
+                        isBrand ? '品牌颜色' : '途径颜色'));
                 };
             });
         }
@@ -10193,6 +10633,13 @@ closeProductCard() {
                 <div class="am-settings__radio-group" role="radiogroup" aria-label="${escapeHtml(this._t("matrixColsSettingTitle", "矩阵视图列数"))}">
                     ${['auto', 2, 3, 4].map(opt => { const selected = String(matrixColsPref) === String(opt); return `<label class="am-form__radio${selected ? " am-form__radio--active" : ""}" data-matrix-cols-option="${opt}" role="radio" aria-checked="${selected ? "true" : "false"}"><input type="radio" name="matrixCols" value="${opt}" ${selected ? "checked" : ""}/><span>${escapeHtml(this._matrixColsButtonLabel(opt))}</span></label>`; }).join("")}
                 </div>
+            </div>
+            <div class="am-settings__section">
+                <h3>${escapeHtml(this._t("reportSectionsTitle", "报表显示"))}</h3>
+                <p class="am-settings__hint">${escapeHtml(this._t("reportSectionsHint", "控制报表页显示的排行与分析板块。"))}</p>
+                <label class="am-form__label"><input type="checkbox" name="reportShowTagRank" ${this.settings.reportShowTagRank !== false ? "checked" : ""}/> ${escapeHtml(this._t("reportShowTagRank", "标签排行"))}</label>
+                <label class="am-form__label"><input type="checkbox" name="reportShowBrandRank" ${this.settings.reportShowBrandRank !== false ? "checked" : ""}/> ${escapeHtml(this._t("reportShowBrandRank", "品牌排行"))}</label>
+                <label class="am-form__label"><input type="checkbox" name="reportShowChannelRank" ${this.settings.reportShowChannelRank !== false ? "checked" : ""}/> ${escapeHtml(this._t("reportShowChannelRank", "途径排行"))}</label>
             </div>
             <div class="am-settings__section am-exchange-rate-settings">
                 <h3>${escapeHtml(this._t("exchangeRateSettingsTitle", "汇率设置"))}</h3>
@@ -10628,18 +11075,56 @@ closeProductCard() {
         return `<div class="am-settings__section am-settings-logs"><h3>${escapeHtml(this._t('opLogTitle', '操作日志'))}</h3><p class="am-settings__hint">${escapeHtml(this._t('settingsLogsHint', '查看资产操作历史；可按资产名称搜索。日志为只读审计记录。'))}</p><button type="button" class="b3-button b3-button--primary am-settings-logs__action" data-open-formal-oplog>${escapeHtml(this._t('settingsLogsOpen', '查看操作日志'))}</button></div>`;
     }
 
+    /**
+     * v2.6.5 阶段3c：设置 Dialog「目录管理」——原标签管理 tab 扩展为顶部 3 子 tab：
+     * 标签 / 品牌 / 途径。三套目录完全复用行 UI 与交互（swatch 换色 + 引用计数 +
+     * 删除被引用 disabled），差异只在读写路径：
+     *   - 标签：_getAssetTagCatalog / _getTagReferenceCount / createTag / deleteTag / updateTag
+     *   - 品牌：_getDimensionDirectory('brands') / _getDimensionReferenceCount / createBrand / deleteBrand / updateBrandColor
+     *   - 途径：_getDimensionDirectory('channels') / _getDimensionReferenceCount / createChannel / deleteChannel / updateChannelColor
+     * 子 tab 态存实例字段 this._settingsCatalogTab（不持久化，默认 'tags'）；
+     * 标签子 tab 的 DOM 结构与 data 属性保持 v2.3.0 原样（既有测试选择器兼容）。
+     */
     renderSettingsTags() {
-        const tags = this._getAssetTagCatalog();
-        const rows = tags.length ? tags.map(tag => {
-            const refs = this._getTagReferenceCount(tag);
-            // v2.3.0 阶段 2b：行首颜色 swatch（有色=实心圆点，无色=虚线占位）
-            /* v2.3.0-hotfix：颜色写 CSS 变量而非按钮背景——34px 按钮只是触摸区，
-               颜色只由 ::after 18px 圆点呈现（用户反馈「颜色不要在圈外」）。 */
-            const swatchStyle = tag.color ? ` style="--am-swatch-color:${escapeHtml(tag.color)}"` : '';
-            const swatchLabel = escapeHtml(this._t('tagColorSwatchLabel', '设置标签颜色'));
-            return `<div class="am-settings-tag-row"><button type="button" class="am-tag-color-swatch${tag.color ? '' : ' am-tag-color-swatch--empty'}" data-settings-tag-color="${escapeHtml(tag.id || '')}"${swatchStyle} title="${swatchLabel}" aria-label="${swatchLabel}"></button><span>${escapeHtml(tag.label)}</span><span class="am-settings-tag-row__count">${escapeHtml(this._t('tagReferenceCount', '{n} 项资产引用', { n: refs }))}</span><button class="b3-button b3-button--remove" data-settings-tag-delete="${escapeHtml(tag.id || '')}" ${refs ? 'disabled' : ''}>${escapeHtml(this._t('tagManagerDelete', '删除'))}</button></div>`;
-        }).join('') : `<div class="am-tag-manager-empty">${escapeHtml(this._t('tagManagerEmpty', '暂无标签'))}</div>`;
-        return `<div class="am-settings__section am-settings-tags"><h3>${escapeHtml(this._t('settingsTagsTitle', '标签管理'))}</h3><p class="am-settings__hint">${escapeHtml(this._t('settingsTagsHint', '管理固定标签目录。标签被引用时不可删除。'))}</p><div class="am-settings-tag-create"><input class="b3-text-field" type="text" name="settingsTagLabel" maxlength="20" placeholder="${escapeHtml(this._t('tagFieldLabel', '标签名'))}"/><button class="b3-button b3-button--primary" data-action="settings-create-tag">${escapeHtml(this._t('tagManagerAddBtn', '+ 新建标签'))}</button></div><div class="am-settings-tag-list">${rows}</div></div>`;
+        const catalogTab = this._settingsCatalogTab === 'brands' || this._settingsCatalogTab === 'channels' ? this._settingsCatalogTab : 'tags';
+        const rowHtml = (entry, kind) => {
+            const refs = kind === 'tags'
+                ? this._getTagReferenceCount(entry)
+                : this._getDimensionReferenceCount(kind, entry.id);
+            const swatchStyle = entry.color ? ` style="--am-swatch-color:${escapeHtml(entry.color)}"` : '';
+            const swatchFallback = kind === 'tags' ? '设置标签颜色' : (kind === 'brands' ? '设置品牌颜色' : '设置途径颜色');
+            const swatchLabel = escapeHtml(this._t(kind === 'tags' ? 'tagColorSwatchLabel' : (kind === 'brands' ? 'brandColorSwatchLabel' : 'channelColorSwatchLabel'), swatchFallback));
+            const kindAttr = kind === 'tags' ? '' : ` data-entry-kind="${kind}"`;
+            const colorAttr = kind === 'tags'
+                ? ` data-settings-tag-color="${escapeHtml(entry.id || '')}"`
+                : ` data-settings-entry-color="${escapeHtml(entry.id || '')}"`;
+            const deleteAttr = kind === 'tags'
+                ? ` data-settings-tag-delete="${escapeHtml(entry.id || '')}"`
+                : ` data-settings-entry-delete="${escapeHtml(entry.id || '')}"`;
+            return `<div class="am-settings-tag-row"><button type="button" class="am-tag-color-swatch${entry.color ? '' : ' am-tag-color-swatch--empty'}"${colorAttr}${kindAttr}${swatchStyle} title="${swatchLabel}" aria-label="${swatchLabel}"></button><span>${escapeHtml(entry.label)}</span><span class="am-settings-tag-row__count">${escapeHtml(this._t('tagReferenceCount', '{n} 项资产引用', { n: refs }))}</span><button class="b3-button b3-button--remove"${deleteAttr}${kindAttr} ${refs ? 'disabled' : ''}>${escapeHtml(this._t('tagManagerDelete', '删除'))}</button></div>`;
+        };
+        const tabDefs = [
+            ['tags', 'settingsCatalogTabTags', '标签'],
+            ['brands', 'settingsCatalogTabBrands', '品牌'],
+            ['channels', 'settingsCatalogTabChannels', '途径'],
+        ];
+        const catalogTabsHtml = `<div class="am-settings-catalog-tabs" role="tablist">${tabDefs.map(([key, i18nKey, fallback]) =>
+            `<button type="button" role="tab" aria-selected="${key === catalogTab ? 'true' : 'false'}" class="am-settings-catalog-tab${key === catalogTab ? ' is-active' : ''}" data-settings-catalog-tab="${key}">${escapeHtml(this._t(i18nKey, fallback))}</button>`).join('')}</div>`;
+        let bodyHtml = '';
+        if (catalogTab === 'tags') {
+            const tags = this._getAssetTagCatalog();
+            const rows = tags.length ? tags.map(tag => rowHtml(tag, 'tags')).join('') : `<div class="am-tag-manager-empty">${escapeHtml(this._t('tagManagerEmpty', '暂无标签'))}</div>`;
+            bodyHtml = `<h3>${escapeHtml(this._t('settingsTagsTitle', '标签管理'))}</h3><p class="am-settings__hint">${escapeHtml(this._t('settingsTagsHint', '管理固定标签目录。标签被引用时不可删除。'))}</p><div class="am-settings-tag-create"><input class="b3-text-field" type="text" name="settingsTagLabel" maxlength="20" placeholder="${escapeHtml(this._t('tagFieldLabel', '标签名'))}"/><button class="b3-button b3-button--primary" data-action="settings-create-tag">${escapeHtml(this._t('tagManagerAddBtn', '+ 新建标签'))}</button></div><div class="am-settings-tag-list">${rows}</div>`;
+        } else if (catalogTab === 'brands') {
+            const brands = this._getDimensionDirectory('brands');
+            const rows = brands.length ? brands.map(entry => rowHtml(entry, 'brands')).join('') : `<div class="am-tag-manager-empty">${escapeHtml(this._t('brandManagerEmpty', '暂无品牌'))}</div>`;
+            bodyHtml = `<h3>${escapeHtml(this._t('settingsBrandsTitle', '品牌管理'))}</h3><p class="am-settings__hint">${escapeHtml(this._t('settingsCatalogHintBrands', '管理品牌目录。品牌被引用时不可删除。'))}</p><div class="am-settings-tag-create"><input class="b3-text-field" type="text" name="settingsBrandLabel" maxlength="20" placeholder="${escapeHtml(this._t('brandFieldLabel', '品牌名'))}"/><button class="b3-button b3-button--primary" data-action="settings-create-brand">${escapeHtml(this._t('settingsCreateBrandBtn', '+ 新建品牌'))}</button></div><div class="am-settings-tag-list">${rows}</div>`;
+        } else {
+            const channels = this._getDimensionDirectory('channels');
+            const rows = channels.length ? channels.map(entry => rowHtml(entry, 'channels')).join('') : `<div class="am-tag-manager-empty">${escapeHtml(this._t('channelManagerEmpty', '暂无途径'))}</div>`;
+            bodyHtml = `<h3>${escapeHtml(this._t('settingsChannelsTitle', '途径管理'))}</h3><p class="am-settings__hint">${escapeHtml(this._t('settingsCatalogHintChannels', '管理入手途径目录。途径被引用时不可删除。'))}</p><div class="am-settings-tag-create"><input class="b3-text-field" type="text" name="settingsChannelLabel" maxlength="20" placeholder="${escapeHtml(this._t('channelFieldLabel', '入手途径名'))}"/><button class="b3-button b3-button--primary" data-action="settings-create-channel">${escapeHtml(this._t('settingsCreateChannelBtn', '+ 新建途径'))}</button></div><div class="am-settings-tag-list">${rows}</div>`;
+        }
+        return `<div class="am-settings__section am-settings-tags">${catalogTabsHtml}${bodyHtml}</div>`;
     }
 
     /**
@@ -11476,7 +11961,7 @@ closeProductCard() {
             if (mode === 'replace') nextIds = selected.slice();
             else if (mode === 'remove') nextIds = currentIds.filter(tagId => selected.indexOf(tagId) < 0);
             else nextIds = currentIds.concat(selected.filter(tagId => currentIds.indexOf(tagId) < 0));
-            if (nextIds.length > 3) throw this._agentTagError('TAG_LIMIT_EXCEEDED', 'an asset can have at most three tags');
+            if (nextIds.length > 32) throw this._agentTagError('TAG_LIMIT_EXCEEDED', 'an asset can have at most 32 tags');
             if (JSON.stringify(nextIds) === JSON.stringify(currentIds)) return { noop: true, context: { asset: asset } };
             const updated = mergeFormalV2AssetPatch(asset, { tagIds: nextIds }, { now: new Date().toISOString(), today: todayISO() });
             return { assets: snapshot.assets.map(item => item.id === id ? updated : item), context: { asset: updated } };
@@ -11512,7 +11997,7 @@ closeProductCard() {
             const nextIds = mode === 'replace'
                 ? selected.slice()
                 : currentIds.concat(selected.filter(tagId => currentIds.indexOf(tagId) < 0));
-            if (nextIds.length > 3) throw this._agentTagError('TAG_LIMIT_EXCEEDED', 'an asset can have at most three tags');
+            if (nextIds.length > 32) throw this._agentTagError('TAG_LIMIT_EXCEEDED', 'an asset can have at most 32 tags');
             if (!createdTags.length && JSON.stringify(nextIds) === JSON.stringify(currentIds)) return { noop: true, context: { asset: asset, tags: tags } };
             const updated = JSON.stringify(nextIds) === JSON.stringify(currentIds)
                 ? asset
@@ -12510,7 +12995,27 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
                 if (_isUuidNorm(s)) return s.toLowerCase();
                 const byLabel = _tagCatalogNorm.find(t => t.label.toLowerCase() === s.toLowerCase());
                 return byLabel ? byLabel.id : null;
-            }).filter(Boolean).slice(0, 3);
+            }).filter(Boolean);
+            /* v2.6.5 阶段2a：标签上限放开（目录上限由存储层统一约束），不做 UI 截断 */
+            /* v2.6.5 阶段2a：品牌 / 入手途径初始选中（单选，UUID 归一小写；空 = 未设置） */
+            const selectedBrandId = _isUuidNorm(asset.brandId) ? String(asset.brandId).trim().toLowerCase() : '';
+            const selectedChannelId = _isUuidNorm(asset.channelId) ? String(asset.channelId).trim().toLowerCase() : '';
+            const dimensionKindMeta = [
+                { key: 'brand', directoryKey: 'brands', field: 'formFieldBrand', fieldText: '品牌', title: 'formBrandPickerTitle', titleText: '选择品牌', selected: selectedBrandId },
+                { key: 'channel', directoryKey: 'channels', field: 'formFieldChannel', fieldText: '入手途径', title: 'formChannelPickerTitle', titleText: '选择入手途径', selected: selectedChannelId },
+            ];
+            const dimensionSectionHtml = `<section class="am-form-section am-formal-dimensions"><div class="am-form-section__title">${escapeHtml(this._t('formDimensionsSection', '品牌 / 入手途径'))}</div>` + dimensionKindMeta.map(meta => {
+                const catalog = this._getDimensionDirectory(meta.directoryKey);
+                const summary = meta.selected ? (() => { const hit = catalog.find(entry => entry.id === meta.selected); return hit ? hit.label : ''; })() : '';
+                const optionsHtml = catalog.length === 0
+                    ? `<div class="am-tag-popover__empty">${escapeHtml(this._t('formDimensionEmpty', '暂无可选'))}</div>`
+                    : catalog.map(entry => {
+                        const active = meta.selected === entry.id;
+                        const swatch = entry.color ? `<span class="am-tag-popover__option-color" style="background:${escapeHtml(entry.color)}"></span>` : '';
+                        return `<button type="button" class="am-tag-popover__option" data-dimension-pick="${escapeHtml(entry.id)}" aria-pressed="${active}">${swatch}<span>${escapeHtml(entry.label)}</span></button>`;
+                    }).join('');
+                return `<div class="am-tag-popover" data-dimension-popover="${meta.key}"><div class="am-tag-popover__row"><span class="am-tag-popover__label">${escapeHtml(this._t(meta.field, meta.fieldText))}</span><button type="button" class="am-tag-popover__trigger" data-dimension-popover-trigger><span data-dimension-popover-summary>${escapeHtml(summary)}</span><span class="am-tag-popover__trigger-chevron">▼</span></button></div><div class="am-tag-popover__panel" data-dimension-popover-panel hidden><div class="am-tag-popover__title">${escapeHtml(this._t(meta.title, meta.titleText))}</div><div class="am-tag-popover__options"> ${optionsHtml} </div><div class="am-tag-popover__new"><input type="text" class="am-tag-popover__new-input" data-dimension-new maxlength="20" placeholder="${escapeHtml(this._t('formDimensionNewPlaceholder', '输入名称，回车新建'))}"><button type="button" class="am-tag-popover__new-add" data-dimension-new-add aria-label="${escapeHtml(this._t('formDimensionNewAdd', '+ 新建'))}">+</button></div><button type="button" class="am-tag-popover__close" data-dimension-popover-close>${escapeHtml(this._t('formTagPickerClose', '关闭'))}</button></div></div>`;
+            }).join('') + `</section>`;
             const familyClass = currentKind === 'physical' ? ' am-physical-sheet' : (currentKind.indexOf('virtual') === 0 ? ' am-virtual-sheet' : (currentKind.indexOf('prepaid') === 0 ? ' am-prepaid-sheet' : (opts.wishlist ? ' am-wishlist-sheet' : '')));
             const currencySymbol = c => c === 'USD' ? '$' : c === 'EUR' ? '€' : c === 'GBP' ? '£' : '¥';
             const costDateLabel = currentKind === 'virtualSubscription' ? this._t('formFieldStartDate', '开始日期') : (currentKind.indexOf('prepaid') === 0 ? this._t('formFieldAcquiredOn', '开通日期') : this._t('formFieldPurchaseDate', '购买日期'));
@@ -12680,7 +13185,7 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
             const virtualKindBodyHtml = isVirtualKind
                 ? `<div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(virtualPriceLabel)}</span><span class="am-fpc1-row__value am-virtual-price-cell">${this._renderGlassSelectCell('currency', asset.currency || 'CNY', this._glassCurrencyOptions(asset.currency || 'CNY'), { disabled: !!(existing || wishCurrencyLocked) })}<input class="am-form-row__amount" name="amount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" value="${escapeHtml(virtualPriceValue)}"></span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('productDetailType', '类型'))}</span><span class="am-type-pill-row am-type-pill-row--inline" data-type-pill-row><button type="button" class="am-type-pill${switchKindDisabledClass}" data-switch-kind="virtualSubscription" aria-pressed="${currentKind === 'virtualSubscription'}"${switchKindLockedTitle}${switchKindDisabledAttr}>${escapeHtml(this._t('formTypeSubscription', '订阅'))}</button><button type="button" class="am-type-pill${switchKindDisabledClass}" data-switch-kind="virtualPerpetual" aria-pressed="${currentKind === 'virtualPerpetual'}"${switchKindLockedTitle}${switchKindDisabledAttr}>${escapeHtml(this._t('formTypePerpetual', '买断'))}</button></span></div></div></div>`
                 + (isSubKind
-                    ? `<div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldStartDate', '开始日期'))}</span><span class="am-fpc1-row__value am-fpc1-row__value--date am-datepicker-cell" data-am-datepicker="acquiredOn" data-am-shortcuts="today"><input type="hidden" name="acquiredOn" value="${escapeHtml(asset.acquiredOn || todayISO())}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(asset.acquiredOn || this._t('datePickerPlaceholder', '选择日期'))}</button></span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formalBillingCycle', '账单周期'))}</span><span class="am-fpc1-row__value am-virtual-inline-select">${this._renderGlassSelectCell('formalPlanCycle', virtualCycle, this._glassCycleOptions())}</span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('productDetailExpiryDate', '到期日'))}</span>${virtualExpiryFieldHtml}</div></div></div>`
+                    ? `<div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldStartDate', '开始日期'))}</span><span class="am-fpc1-row__value am-fpc1-row__value--date am-datepicker-cell" data-am-datepicker="acquiredOn" data-am-shortcuts="today"><input type="hidden" name="acquiredOn" value="${escapeHtml(asset.acquiredOn || todayISO())}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(asset.acquiredOn || this._t('datePickerPlaceholder', '选择日期'))}</button></span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formalBillingCycle', '账单周期'))}${this._requiredDotHtml()}</span><span class="am-fpc1-row__value am-virtual-inline-select">${this._renderGlassSelectCell('formalPlanCycle', virtualCycle, this._glassCycleOptions())}</span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('productDetailExpiryDate', '到期日'))}</span>${virtualExpiryFieldHtml}</div></div></div>`
                     : `<div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldPurchaseDate', '购买日期'))}</span><span class="am-fpc1-row__value am-fpc1-row__value--date am-datepicker-cell" data-am-datepicker="acquiredOn" data-am-shortcuts="today"><input type="hidden" name="acquiredOn" value="${escapeHtml(asset.acquiredOn || todayISO())}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(asset.acquiredOn || this._t('datePickerPlaceholder', '选择日期'))}</button></span></div></div></div>`)
                 + (isSubKind
                     ? `<div class="am-form-card"><div class="am-form-row am-form-row--toggle am-form-card__head"><span class="am-form-row__label">${escapeHtml(this._t('formFieldAutoRenew', '自动续费'))}</span><label class="am-form-toggle"><input type="checkbox" name="autoRenew" ${virtualAutoRenew ? 'checked' : ''}><span class="am-form-toggle__track"><span class="am-form-toggle__thumb"></span></span></label></div></div><div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldAccount', '账号'))}</span><input class="am-fpc1-row__value" type="text" name="accountLabel" value="${escapeHtml(virtualAccountLabel)}"></div></div></div>`
@@ -12709,8 +13214,10 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
                 const coverPreview = this.renderAssetCoverContent(coverAsset, '📦', 'am-formal-cover-picker__preview-image', 'am-formal-cover-picker__preview-fallback');
                 const tagSummary = selectedTagIds.length === 0 ? '' : selectedTagIds.map(id => { const t = this._getAssetTagCatalog().find(x => x.id === id); return t ? t.label : ''; }).filter(Boolean).join('、');
                 const tagPickerOptionsHtml = this._getAssetTagCatalog().length === 0 ? `<div class="am-tag-popover__empty">${escapeHtml(this._t('formTagPickerEmpty', '暂无可选标签'))}</div>` : this._getAssetTagCatalog().map(tag => { const active = selectedTagIds.indexOf(tag.id) >= 0; const swatch = tag.color ? `<span class="am-tag-popover__option-color" style="background:${escapeHtml(tag.color)}"></span>` : ''; return `<button type="button" class="am-tag-popover__option" data-tag-pick="${escapeHtml(tag.id)}" aria-pressed="${active}">${swatch}<span>${escapeHtml(tag.label)}</span></button>`; }).join('');
-                mask.innerHTML = `<div class="am-edit-sheet am-form-shell${familyClass}"><div class="am-edit-sheet__grabber"></div><header class="am-edit-sheet__header am-form-shell__header"><button type="button" class="am-edit-sheet__close" data-close aria-label="${escapeHtml(this._t('btnClose', '关闭'))}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button><h2 class="am-edit-sheet__title">${escapeHtml(existing ? this._t("formEditTitle", "编辑资产") : (currentKind === 'physical' ? this._t("formAddTitle", "添加资产") : (currentKind.indexOf('prepaid') === 0 ? this._t('formAddPrepaid', '添加资产预付权益') : this._formalKindLabel(currentKind))))}</h2><span class="am-form-shell__header-spacer"></span></header><form id="${formAssetId}" data-form data-selected-tag-ids="${escapeHtml(selectedTagIds.join(','))}"><section class="am-form-basic-card am-form-basic-card--name-only"><button type="button" class="am-form-basic-card__cover" data-formal-cover-toggle><span class="am-form-basic-card__cover-image" data-formal-cover-target>${coverPreview}</span><span class="am-form-basic-card__cover-edit">+</span></button><div class="am-form-basic-card__fields"><div class="am-form-basic-card__name"><div class="am-form-basic-card__name-label">${escapeHtml(this._t(currentKind === 'physical' ? 'formNameLabel' : 'formNamePlaceholder', currentKind === 'physical' ? '资产名称' : '名称'))}</div><div class="am-name-field"><input type="text" class="am-name-field__input" name="name" required value="${escapeHtml(asset.name || '')}" placeholder="${escapeHtml(this._t(currentKind === 'physical' ? 'formNameLabel' : 'formNamePlaceholder', currentKind === 'physical' ? '资产名称' : '名称'))}"></div></div></div><div data-cover-picker-slot></div>${physicalCard1Rows}</section><div data-kind-body>${kindBodyHtml}</div><section class="am-form-section am-formal-tags"><div class="am-form-section__title">${escapeHtml(this._t('formFieldTag', '标签'))}</div><div class="am-tag-popover" data-tag-popover><div class="am-tag-popover__row"><span class="am-tag-popover__label">${escapeHtml(this._t('formFieldTag', '标签'))}</span><button type="button" class="am-tag-popover__trigger" data-tag-popover-trigger><span data-tag-popover-summary>${escapeHtml(tagSummary)}</span><span class="am-tag-popover__trigger-chevron">▼</span></button></div><div class="am-tag-popover__panel" data-tag-popover-panel hidden><div class="am-tag-popover__title">${escapeHtml(this._t('formTagPickerTitle', '选择标签（最多 3 个）'))}</div><div class="am-tag-popover__options"> ${tagPickerOptionsHtml} </div><div class="am-tag-popover__new"><input type="text" class="am-tag-popover__new-input" data-tag-new maxlength="20" placeholder="${escapeHtml(this._t('formTagNewPlaceholder', '新建标签，回车添加'))}"><button type="button" class="am-tag-popover__new-add" data-tag-new-add aria-label="${escapeHtml(this._t('formTagNewAdd', '+ 新建'))}">+</button></div><button type="button" class="am-tag-popover__close" data-tag-popover-close>${escapeHtml(this._t('formTagPickerClose', '关闭'))}</button></div></div></section><section class="am-form-section am-form-notes-section"><div class="am-form-section__title">${escapeHtml(this._t('formFieldNotes', '备注'))}</div><div class="am-form-textarea"><textarea class="am-form-textarea__field" name="notes" placeholder="${escapeHtml(this._t('formFieldNotes', '备注'))}">${escapeHtml(asset.notes || '')}</textarea></div></section></form><footer class="am-form-shell__footer"><button type="submit" form="${formAssetId}" class="am-form-shell__save" data-save>${escapeHtml(this._t('btnSave', '保存'))}<span class="am-form-shell__save-spinner"></span></button></footer></div>`;
+                mask.innerHTML = `<div class="am-edit-sheet am-form-shell${familyClass}"><div class="am-edit-sheet__grabber"></div><header class="am-edit-sheet__header am-form-shell__header"><button type="button" class="am-edit-sheet__close" data-close aria-label="${escapeHtml(this._t('btnClose', '关闭'))}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button><h2 class="am-edit-sheet__title">${escapeHtml(existing ? this._t("formEditTitle", "编辑资产") : (currentKind === 'physical' ? this._t("formAddTitle", "添加资产") : (currentKind.indexOf('prepaid') === 0 ? this._t('formAddPrepaid', '添加资产预付权益') : this._formalKindLabel(currentKind))))}</h2><span class="am-form-shell__header-spacer"></span></header><form id="${formAssetId}" data-form data-selected-tag-ids="${escapeHtml(selectedTagIds.join(','))}" data-selected-brand-id="${escapeHtml(selectedBrandId)}" data-selected-channel-id="${escapeHtml(selectedChannelId)}"><section class="am-form-basic-card am-form-basic-card--name-only"><button type="button" class="am-form-basic-card__cover" data-formal-cover-toggle><span class="am-form-basic-card__cover-image" data-formal-cover-target>${coverPreview}</span><span class="am-form-basic-card__cover-edit">+</span></button><div class="am-form-basic-card__fields"><div class="am-form-basic-card__name"><div class="am-form-basic-card__name-label">${escapeHtml(this._t(currentKind === 'physical' ? 'formNameLabel' : 'formNamePlaceholder', currentKind === 'physical' ? '资产名称' : '名称'))}${this._requiredDotHtml()}</div><div class="am-name-field"><input type="text" class="am-name-field__input" name="name" required value="${escapeHtml(asset.name || '')}" placeholder="${escapeHtml(this._t(currentKind === 'physical' ? 'formNameLabel' : 'formNamePlaceholder', currentKind === 'physical' ? '资产名称' : '名称'))}"></div></div></div><div data-cover-picker-slot></div>${physicalCard1Rows}</section><div data-kind-body>${kindBodyHtml}</div>${dimensionSectionHtml}<section class="am-form-section am-formal-tags"><div class="am-form-section__title">${escapeHtml(this._t('formFieldTag', '标签'))}</div><div class="am-tag-popover" data-tag-popover><div class="am-tag-popover__row"><span class="am-tag-popover__label">${escapeHtml(this._t('formFieldTag', '标签'))}</span><button type="button" class="am-tag-popover__trigger" data-tag-popover-trigger><span data-tag-popover-summary>${escapeHtml(tagSummary)}</span><span class="am-tag-popover__trigger-chevron">▼</span></button></div><div class="am-tag-popover__panel" data-tag-popover-panel hidden><div class="am-tag-popover__title">${escapeHtml(this._t('formTagPickerTitle', '选择标签'))}</div><div class="am-tag-popover__options"> ${tagPickerOptionsHtml} </div><div class="am-tag-popover__new"><input type="text" class="am-tag-popover__new-input" data-tag-new maxlength="20" placeholder="${escapeHtml(this._t('formTagNewPlaceholder', '新建标签，回车添加'))}"><button type="button" class="am-tag-popover__new-add" data-tag-new-add aria-label="${escapeHtml(this._t('formTagNewAdd', '+ 新建'))}">+</button></div><button type="button" class="am-tag-popover__close" data-tag-popover-close>${escapeHtml(this._t('formTagPickerClose', '关闭'))}</button></div></div></section><section class="am-form-section am-form-notes-section"><div class="am-form-section__title">${escapeHtml(this._t('formFieldNotes', '备注'))}</div><div class="am-form-textarea"><textarea class="am-form-textarea__field" name="notes" placeholder="${escapeHtml(this._t('formFieldNotes', '备注'))}">${escapeHtml(asset.notes || '')}</textarea></div></section></form><footer class="am-form-shell__footer"><button type="submit" form="${formAssetId}" class="am-form-shell__save" data-save>${escapeHtml(this._t('btnSave', '保存'))}<span class="am-form-shell__save-spinner"></span></button></footer></div>`;
                 const pendingTags = new Map();
+                /* v2.6.5 阶段2a：品牌 / 入手途径 pending 新建条目（tempId → label），保存时 resolve */
+                const pendingDimensions = { brand: new Map(), channel: new Map() };
                 mask.querySelector('[data-close]').onclick = () => { void discardPendingCover(); mask.remove(); };
                 const coverToggle = mask.querySelector('[data-formal-cover-toggle]');
                 if (coverToggle) coverToggle.onclick = () => { coverState.pickerOpen = !coverState.pickerOpen; updateCoverPicker(); };
@@ -12737,12 +13244,11 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
                         const exist = _apCatalog.find(t => t.label.toLowerCase() === label.toLowerCase());
                         let next = (form.dataset.selectedTagIds || '').split(',').filter(Boolean);
                         if (exist) {
-                            if (next.indexOf(exist.id) < 0) { if (next.length >= 3) { this.showToast('⚠️ ' + this._t('formalTagIdsInvalid', '标签必须是最多 3 个有效 UUID')); return; } next.push(exist.id); }
+                            if (next.indexOf(exist.id) < 0) next.push(exist.id);
                             setSelectedTagIds(next);
                             return;
                         }
                         const tempId = createStableId();
-                        if (next.length >= 3) { this.showToast('⚠️ ' + this._t('formalTagIdsInvalid', '标签必须是最多 3 个有效 UUID')); return; }
                         pendingTags.set(tempId, label);
                         next.push(tempId);
                         const opt = document.createElement('button');
@@ -12764,8 +13270,7 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
                         const id = button.dataset.tagPick;
                         let next = (form.dataset.selectedTagIds || '').split(',').filter(Boolean);
                         if (next.indexOf(id) >= 0) next = next.filter(x => x !== id);
-                        else if (next.length < 3) next.push(id);
-                        else { this.showToast('⚠️ ' + this._t('formalTagIdsInvalid', '标签必须是最多 3 个有效 UUID')); return; }
+                        else next.push(id);
                         setSelectedTagIds(next);
                         /* summary + aria-pressed are refreshed by setSelectedTagIds() */
                         /* legacy inline summary replaced by computeTagSummary (supports pending tags) */
@@ -12779,6 +13284,66 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
                     if (newAdd) newAdd.onclick = event => { event.preventDefault(); event.stopPropagation(); commitNew(); };
                     if (newInput) newInput.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); commitNew(); } });
                 }
+                /* v2.6.5 阶段2a：品牌 / 入手途径单选 popover 绑定（结构复用标签 popover）。
+                 * 选中状态写 form 的 data-selected-brand-id / data-selected-channel-id；
+                 * 点选项=选中、再点=取消（隐式"未设置"）；底部输入框回车/加号 → pending 新建。 */
+                mask.querySelectorAll('[data-dimension-popover]').forEach(dimensionRoot => {
+                    const dimensionKey = dimensionRoot.getAttribute('data-dimension-popover');
+                    const dimensionDirectoryKey = dimensionKey === 'brand' ? 'brands' : 'channels';
+                    const dimensionAttr = dimensionKey === 'brand' ? 'data-selected-brand-id' : 'data-selected-channel-id';
+                    const dimensionPending = pendingDimensions[dimensionKey];
+                    const dimensionForm = mask.querySelector('form');
+                    const dimensionTrigger = dimensionRoot.querySelector('[data-dimension-popover-trigger]');
+                    const dimensionPanel = dimensionRoot.querySelector('[data-dimension-popover-panel]');
+                    const dimensionSummary = dimensionRoot.querySelector('[data-dimension-popover-summary]');
+                    const dimensionDirectory = () => this._getDimensionDirectory(dimensionDirectoryKey);
+                    const computeDimensionSummary = () => {
+                        const id = dimensionForm.getAttribute(dimensionAttr);
+                        if (!id) return '';
+                        const pendingLabel = dimensionPending.get(id);
+                        if (pendingLabel) return pendingLabel;
+                        const hit = dimensionDirectory().find(entry => entry.id === id);
+                        return hit ? hit.label : '';
+                    };
+                    const setSelectedDimension = next => {
+                        dimensionForm.setAttribute(dimensionAttr, next || '');
+                        dimensionSummary.textContent = computeDimensionSummary();
+                        dimensionRoot.querySelectorAll('[data-dimension-pick]').forEach(b => b.setAttribute('aria-pressed', String(b.getAttribute('data-dimension-pick') === next)));
+                    };
+                    const addPendingDimension = rawLabel => {
+                        const label = String(rawLabel || '').trim().slice(0, 20);
+                        if (!label) return;
+                        const exist = dimensionDirectory().find(entry => entry.label.toLowerCase() === label.toLowerCase());
+                        if (exist) { setSelectedDimension(exist.id); return; }
+                        const tempId = createStableId();
+                        dimensionPending.set(tempId, label);
+                        const opt = document.createElement('button');
+                        opt.type = 'button';
+                        opt.className = 'am-tag-popover__option am-tag-popover__option--pending';
+                        opt.setAttribute('data-dimension-pick', tempId);
+                        opt.setAttribute('aria-pressed', 'true');
+                        opt.innerHTML = '<span class="am-tag-popover__option-color" style="background:#3575f3"></span><span>🆕 ' + escapeHtml(label) + '</span>';
+                        opt.onclick = () => { if (dimensionForm.getAttribute(dimensionAttr) === tempId) { dimensionPending.delete(tempId); if (opt.parentNode) opt.parentNode.removeChild(opt); setSelectedDimension(''); } };
+                        const optsBox = dimensionPanel.querySelector('.am-tag-popover__options');
+                        if (optsBox) optsBox.appendChild(opt);
+                        setSelectedDimension(tempId);
+                    };
+                    dimensionTrigger.onclick = event => { event.preventDefault(); dimensionPanel.hidden = false; };
+                    dimensionTrigger.addEventListener('mousedown', event => event.stopPropagation());
+                    dimensionPanel.addEventListener('mousedown', event => event.stopPropagation());
+                    dimensionRoot.addEventListener('mousedown', event => event.stopPropagation());
+                    dimensionRoot.querySelectorAll('[data-dimension-pick]').forEach(button => { button.onclick = () => {
+                        const id = button.getAttribute('data-dimension-pick');
+                        setSelectedDimension(dimensionForm.getAttribute(dimensionAttr) === id ? '' : id);
+                    }; });
+                    const dimensionClose = dimensionRoot.querySelector('[data-dimension-popover-close]');
+                    if (dimensionClose) dimensionClose.onclick = () => { dimensionPanel.hidden = true; };
+                    const dimensionNewInput = dimensionPanel.querySelector('[data-dimension-new]');
+                    const dimensionNewAdd = dimensionPanel.querySelector('[data-dimension-new-add]');
+                    const commitDimensionNew = () => { if (dimensionNewInput) { addPendingDimension(dimensionNewInput.value); dimensionNewInput.value = ''; } };
+                    if (dimensionNewAdd) dimensionNewAdd.onclick = event => { event.preventDefault(); event.stopPropagation(); commitDimensionNew(); };
+                    if (dimensionNewInput) dimensionNewInput.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); commitDimensionNew(); } });
+                });
                 const formElement = mask.querySelector('form');
                 // Disable browser constraint bubbles; validation is rendered by the plugin.
                 formElement.noValidate = true;
@@ -12822,8 +13387,37 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
                                 if (_byLabel && _resolvedTagIds.indexOf(_byLabel.id) < 0) _resolvedTagIds.push(_byLabel.id);
                             }
                         }
-                        if (_resolvedTagIds.length > 3) throw new Error(this._t('formalTagIdsInvalid', '标签必须是最多 3 个有效 UUID'));
                         const tagIds = _resolvedTagIds;
+                        /* v2.6.5 阶段2a：品牌 / 入手途径 resolve —— pending 名称保存时落真实目录条目
+                         * （不存在则 createBrand/createChannel），resolve 失败中止保存并 toast。
+                         * 空值 / UUID 走同步快路径（不引入 microtask，保持与旧提交时序一致）。 */
+                        const _resolveDimensionRef = (dimensionKey, directoryKey, createEntry) => {
+                            const dimensionAttr = dimensionKey === 'brand' ? 'data-selected-brand-id' : 'data-selected-channel-id';
+                            const dimensionRaw = (form.getAttribute(dimensionAttr) || '').trim();
+                            if (!dimensionRaw) return null;
+                            if (_isUuidSave(dimensionRaw)) return dimensionRaw.toLowerCase();
+                            const dimensionLabel = String(pendingDimensions[dimensionKey].get(dimensionRaw) || '').trim();
+                            if (!dimensionLabel) return null;
+                            return (async () => {
+                                const _findByLabel = () => this._getDimensionDirectory(directoryKey).find(entry => entry.label.toLowerCase() === dimensionLabel.toLowerCase());
+                                let _real = _findByLabel();
+                                if (!_real) {
+                                    try { _real = await createEntry({ label: dimensionLabel }); }
+                                    catch (_e) {
+                                        _real = _findByLabel();
+                                        if (!_real) {
+                                            this.showToast('⚠️ ' + this._t(dimensionKey === 'brand' ? 'brandSaveFailed' : 'channelSaveFailed', dimensionKey === 'brand' ? '品牌保存失败' : '入手途径保存失败'));
+                                            throw _e;
+                                        }
+                                    }
+                                }
+                                return _real.id;
+                            })();
+                        };
+                        const _brandRef = _resolveDimensionRef('brand', 'brands', options => this.createBrand(options));
+                        const brandId = (_brandRef && typeof _brandRef.then === 'function') ? await _brandRef : _brandRef;
+                        const _channelRef = _resolveDimensionRef('channel', 'channels', options => this.createChannel(options));
+                        const channelId = (_channelRef && typeof _channelRef.then === 'function') ? await _channelRef : _channelRef;
                         const value = name => form.elements[name] ? form.elements[name].value : '';
                         const checked = name => !!(form.elements[name] && form.elements[name].checked);
                         const optionalMinor = name => value(name) === '' ? null : parseMajorToMinor(value(name), currency);
@@ -12861,7 +13455,7 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
                                 : activeKind === 'virtualPerpetual'
                                     ? { licenseAccountLabel: value('licenseAccountLabel') || null }
                                     : { provider: value('provider') || null, expiresOn: optionalDate('expiresOn') };
-                        const dto = { kind: activeKind, name: form.elements.name.value.trim(), status: opts.wishlist ? 'wishlist' : (draft.status || (existing ? existing.status : 'active')), currency: currency, categoryId: form.elements.categoryId ? form.elements.categoryId.value : (existing ? existing.categoryId : null), tagIds: tagIds, cover: persistedCover, notes: form.elements.notes ? form.elements.notes.value || '' : (existing ? (existing.notes || '') : '') };
+                        const dto = { kind: activeKind, name: form.elements.name.value.trim(), status: opts.wishlist ? 'wishlist' : (draft.status || (existing ? existing.status : 'active')), currency: currency, categoryId: form.elements.categoryId ? form.elements.categoryId.value : (existing ? existing.categoryId : null), tagIds: tagIds, cover: persistedCover, notes: form.elements.notes ? form.elements.notes.value || '' : (existing ? (existing.notes || '') : ''), brandId: brandId, channelId: channelId };
                         if (!existing) dto.id = formAssetId;
                         if (opts.wishlist) dto.wishlist = { expectedAmountMinor: amount, reason: '' };
                         else { dto.acquiredOn = form.elements.acquiredOn ? form.elements.acquiredOn.value : todayISO(); dto.statusChangedOn = dto.status === 'retired' ? (value('retiredDate') || todayISO()) : dto.acquiredOn; dto.details = baseDetails; }
@@ -13559,7 +14153,7 @@ openMaintenanceSheet(id, preferredHost) { return this.openFormalWorkflowDialog(i
         const asset = (this.assets || []).find(item => item && item.id === id);
         if (!asset || asset.kind !== FORMAL_ASSET_KIND.PHYSICAL) throw new Error('physical asset is required');
         const defaultDate = asset.statusChangedOn || todayISO();
-        const body = `<div class="am-sale-sheet"><form data-sale-form><label>${escapeHtml(this._t('physicalSaleFieldPrice', '转让价格'))}<input name="salePrice" type="number" min="0.01" step="0.01" required></label><label>${escapeHtml(this._t('physicalSaleFieldDate', '转让日期'))}<span class="am-datepicker-cell" data-am-datepicker="soldOn" data-am-shortcuts="today"><input type="hidden" name="soldOn" value="${escapeHtml(defaultDate)}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(defaultDate || this._t('datePickerPlaceholder', '选择日期'))}</button></span></label><label>${escapeHtml(this._t('physicalSaleFieldNote', '备注（可选）'))}<textarea name="note" rows="3"></textarea></label><button type="submit">${escapeHtml(this._t('physicalSaleConfirm', '转让'))}</button></form></div>`;
+        const body = `<div class="am-sale-sheet"><form data-sale-form><label>${escapeHtml(this._t('physicalSaleFieldPrice', '转让价格'))}${this._requiredDotHtml()}<input name="salePrice" type="number" min="0.01" step="0.01" required></label><label>${escapeHtml(this._t('physicalSaleFieldDate', '转让日期'))}${this._requiredDotHtml()}<span class="am-datepicker-cell" data-am-datepicker="soldOn" data-am-shortcuts="today"><input type="hidden" name="soldOn" value="${escapeHtml(defaultDate)}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(defaultDate || this._t('datePickerPlaceholder', '选择日期'))}</button></span></label><label>${escapeHtml(this._t('physicalSaleFieldNote', '备注（可选）'))}<textarea name="note" rows="3"></textarea></label><button type="submit">${escapeHtml(this._t('physicalSaleConfirm', '转让'))}</button></form></div>`;
         return this.showDialog(this._t('physicalSaleTitle', '转让'), body, dialog => {
             const form = dialog.element.querySelector('[data-sale-form]');
             this._bindAmDatepickers(dialog.element);
@@ -13593,7 +14187,7 @@ openMaintenanceSheet(id, preferredHost) { return this.openFormalWorkflowDialog(i
             currentRemaining = projection && Number.isSafeInteger(projection.remainingCount) ? projection.remainingCount : 0;
         } catch (error) { currentRemaining = 0; }
         const defaultDate = todayISO();
-        const body = `<div class="am-prepaid-adjust-sheet"><p>${escapeHtml(this._t('prepaidRemainingCountField', '剩余次数'))}：${currentRemaining}</p><form data-prepaid-adjust-form><label>${escapeHtml(this._t('prepaidRemainingCountField', '剩余次数'))}<input name="targetCount" type="number" min="0" step="1" value="${currentRemaining}" required></label><label>${escapeHtml(this._t('renewFieldStartDate', '生效日期'))}<span class="am-datepicker-cell" data-am-datepicker="effectiveDate" data-am-shortcuts="today"><input type="hidden" name="effectiveDate" value="${escapeHtml(defaultDate)}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(defaultDate || this._t('datePickerPlaceholder', '选择日期'))}</button></span></label><label>${escapeHtml(this._t('fieldNote', '备注'))}<input name="note" type="text" value="${escapeHtml(this._t('prepaidAdjustReasonDefault', '次数校正'))}"></label><button type="submit">${escapeHtml(this._t('prepaidCountAdjustConfirm', '保存校正'))}</button></form></div>`;
+        const body = `<div class="am-prepaid-adjust-sheet"><p>${escapeHtml(this._t('prepaidRemainingCountField', '剩余次数'))}：${currentRemaining}</p><form data-prepaid-adjust-form><label>${escapeHtml(this._t('prepaidRemainingCountField', '剩余次数'))}${this._requiredDotHtml()}<input name="targetCount" type="number" min="0" step="1" value="${currentRemaining}" required></label><label>${escapeHtml(this._t('renewFieldStartDate', '生效日期'))}${this._requiredDotHtml()}<span class="am-datepicker-cell" data-am-datepicker="effectiveDate" data-am-shortcuts="today"><input type="hidden" name="effectiveDate" value="${escapeHtml(defaultDate)}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(defaultDate || this._t('datePickerPlaceholder', '选择日期'))}</button></span></label><label>${escapeHtml(this._t('fieldNote', '备注'))}<input name="note" type="text" value="${escapeHtml(this._t('prepaidAdjustReasonDefault', '次数校正'))}"></label><button type="submit">${escapeHtml(this._t('prepaidCountAdjustConfirm', '保存校正'))}</button></form></div>`;
         return this.showDialog(this._t('prepaidCountAdjustTitle', '校正剩余次数'), body, dialog => {
             const form = dialog.element.querySelector('[data-prepaid-adjust-form]');
             this._bindAmDatepickers(dialog.element);
@@ -13622,7 +14216,7 @@ openMaintenanceSheet(id, preferredHost) { return this.openFormalWorkflowDialog(i
             currentRemaining = projection && Number.isSafeInteger(projection.remainingCount) ? projection.remainingCount : 0;
         } catch (error) { currentRemaining = 0; }
         const defaultDate = todayISO();
-        const body = `<div class="am-prepaid-outflow-sheet"><p>${escapeHtml(this._t('prepaidRemainingCountField', '剩余次数'))}：${currentRemaining}</p><form data-prepaid-outflow-form><label>${escapeHtml(this._t('prepaidRecordOutflowField', '消费次数'))}<input name="count" type="number" min="1" step="1" value="1" required></label><label>${escapeHtml(this._t('renewFieldStartDate', '生效日期'))}<span class="am-datepicker-cell" data-am-datepicker="effectiveDate" data-am-shortcuts="today"><input type="hidden" name="effectiveDate" value="${escapeHtml(defaultDate)}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(defaultDate || this._t('datePickerPlaceholder', '选择日期'))}</button></span></label><label>${escapeHtml(this._t('fieldNote', '备注'))}<input name="note" type="text"></label><button type="submit">${escapeHtml(this._t('btnSave', '保存'))}</button></form></div>`;
+        const body = `<div class="am-prepaid-outflow-sheet"><p>${escapeHtml(this._t('prepaidRemainingCountField', '剩余次数'))}：${currentRemaining}</p><form data-prepaid-outflow-form><label>${escapeHtml(this._t('prepaidRecordOutflowField', '消费次数'))}${this._requiredDotHtml()}<input name="count" type="number" min="1" step="1" value="1" required></label><label>${escapeHtml(this._t('renewFieldStartDate', '生效日期'))}${this._requiredDotHtml()}<span class="am-datepicker-cell" data-am-datepicker="effectiveDate" data-am-shortcuts="today"><input type="hidden" name="effectiveDate" value="${escapeHtml(defaultDate)}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(defaultDate || this._t('datePickerPlaceholder', '选择日期'))}</button></span></label><label>${escapeHtml(this._t('fieldNote', '备注'))}<input name="note" type="text"></label><button type="submit">${escapeHtml(this._t('btnSave', '保存'))}</button></form></div>`;
         return this.showDialog(this._t('prepaidOutflowTitle', '记一笔消费'), body, dialog => {
             const form = dialog.element.querySelector('[data-prepaid-outflow-form]');
             this._bindAmDatepickers(dialog.element);
@@ -13682,11 +14276,11 @@ openMaintenanceSheet(id, preferredHost) { return this.openFormalWorkflowDialog(i
             ? `${this._t('prepaidBalance', '余额')}：${formatAmountMinor(currentBalanceMinor, currency)}`
             : `${this._t('prepaidRemainingCount', '剩余次数')}：${currentRemaining}`;
         const valueField = isAmountAction
-            ? `<label>${escapeHtml(this._t('prepaidFieldAmount', '金额'))}<input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required></label>`
+            ? `<label>${escapeHtml(this._t('prepaidFieldAmount', '金额'))}${this._requiredDotHtml()}<input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required></label>`
             : (config.kind === 'countAdjust'
-                ? `<label>${escapeHtml(this._t('prepaidRemainingCountField', '剩余次数'))}<input name="targetCount" type="number" min="0" step="1" value="${currentRemaining}" required></label>`
-                : `<label>${escapeHtml(this._t('prepaidFieldCount', '次数'))}<input name="count" type="number" min="1" step="1" value="1" required></label>`);
-        const body = `<div class="am-prepaid-quick-sheet"><p class="am-prepaid-quick-sheet__summary">${escapeHtml(summary)}</p><form data-prepaid-quick-form>${valueField}<label>${escapeHtml(this._t('prepaidFieldEffectiveDate', '生效日期'))}<span class="am-datepicker-cell" data-am-datepicker="effectiveDate" data-am-shortcuts="today"><input type="hidden" name="effectiveDate" value="${escapeHtml(defaultDate)}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(defaultDate || this._t('datePickerPlaceholder', '选择日期'))}</button></span></label><label>${escapeHtml(this._t('fieldNote', '备注'))}<input name="note" type="text"></label><button type="submit">${escapeHtml(this._t('btnSave', '保存'))}</button></form></div>`;
+                ? `<label>${escapeHtml(this._t('prepaidRemainingCountField', '剩余次数'))}${this._requiredDotHtml()}<input name="targetCount" type="number" min="0" step="1" value="${currentRemaining}" required></label>`
+                : `<label>${escapeHtml(this._t('prepaidFieldCount', '次数'))}${this._requiredDotHtml()}<input name="count" type="number" min="1" step="1" value="1" required></label>`);
+        const body = `<div class="am-prepaid-quick-sheet"><p class="am-prepaid-quick-sheet__summary">${escapeHtml(summary)}</p><form data-prepaid-quick-form>${valueField}<label>${escapeHtml(this._t('prepaidFieldEffectiveDate', '生效日期'))}${this._requiredDotHtml()}<span class="am-datepicker-cell" data-am-datepicker="effectiveDate" data-am-shortcuts="today"><input type="hidden" name="effectiveDate" value="${escapeHtml(defaultDate)}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(defaultDate || this._t('datePickerPlaceholder', '选择日期'))}</button></span></label><label>${escapeHtml(this._t('fieldNote', '备注'))}<input name="note" type="text"></label><button type="submit">${escapeHtml(this._t('btnSave', '保存'))}</button></form></div>`;
         return this.showDialog(config.title, body, dialog => {
             const form = dialog.element.querySelector('[data-prepaid-quick-form]');
             this._bindAmDatepickers(dialog.element);
@@ -13991,6 +14585,8 @@ openMaintenanceSheet(id, preferredHost) { return this.openFormalWorkflowDialog(i
             const result = await this.storage.replaceFormalDomainFromBackup(snapshot);
             const committed = result.committedSnapshot;
             this.assets = committed.assets; this._tags = committed.tags;
+            this._brands = committed.dimensions && Array.isArray(committed.dimensions.brands) ? committed.dimensions.brands : [];
+            this._channels = committed.dimensions && Array.isArray(committed.dimensions.channels) ? committed.dimensions.channels : [];
             this._financialEvents = committed.financialEvents; this._lifecycleEvents = committed.lifecycleEvents;
             this._subscriptionPeriods = committed.subscriptionPeriods; this._prepaidTransactions = committed.prepaidTransactions;
             this._maintenanceRecords = committed.maintenance; this.settings = committed.settings;
@@ -14025,6 +14621,8 @@ openMaintenanceSheet(id, preferredHost) { return this.openFormalWorkflowDialog(i
             const result = await this.storage.initializeFormalStorageReset({ confirmReset: true });
             const committed = result.committedSnapshot || {};
             this.assets = committed.assets || []; this._tags = committed.tags || [];
+            this._brands = committed.dimensions && Array.isArray(committed.dimensions.brands) ? committed.dimensions.brands : [];
+            this._channels = committed.dimensions && Array.isArray(committed.dimensions.channels) ? committed.dimensions.channels : [];
             this.settings = committed.settings || Object.assign({}, DEFAULT_SETTINGS);
             this.wishlistEvents = []; this._opLogs = []; this._maintenanceRecords = [];
             this._wishlistEventsLoaded = true;
