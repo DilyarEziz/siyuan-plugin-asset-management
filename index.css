@@ -15032,24 +15032,28 @@
  *   inline maxWidth clamp 兜底，实际宽度 = min(width, max-width)）；
  *   tab 行基类是 auto-fit grid（96px 最小列在 240px 内放不下三个
  *   会折行），改 flex + nowrap 固定一排三个；tab 按钮压成药丸
- *   圆角 + 左右最小内边距，字号继承下拉基础字号（与「全选」
- *   按钮同源）；已选摘要 chips 与 tab 行拉开 8px 间距。选择器带
- *   --tag/--filter 作用域，不触碰 .am-type-pill 本体，表单里的
- *   订阅/买断切换不受影响。
+ *   圆角 + 左右最小内边距，tab 与「全选」按钮字号统一钉在 13px
+ *   （不再依赖浏览器按钮默认字号/继承链差异）；tab 行左右外边距
+ *   4px，与「全选」行左缘（面板 4px + actions 4px）对齐；标签
+ *   选项列表行距 2px；已选摘要 chips 与 tab 行拉开 8px 间距。
+ *   选择器带 --tag/--filter 作用域，不触碰 .am-type-pill 本体与
+ *   __tags / __tag-actions 基础定义，表单里的订阅/买断切换不受影响。
  * ============================================================ */
 .am-home-filter-dropdown--tag { width: 240px; }
 .am-home-filter-dropdown--tag .am-home-filter-dropdown__chips { padding-bottom: 8px; }
-.am-home-filter-dropdown--tag .am-type-pill-row--filter { display: flex; flex-wrap: nowrap; gap: 6px; }
+.am-home-filter-dropdown--tag .am-type-pill-row--filter { display: flex; flex-wrap: nowrap; gap: 6px; margin: 0 4px; }
 .am-home-filter-dropdown--tag .am-type-pill-row--filter .am-type-pill {
     flex: 1 1 0;
     min-width: 0;
     min-height: 0;
     border-radius: 999px;
-    font-size: inherit;
+    font-size: 13px;
     padding: 5px 2px;
     white-space: nowrap;
     text-align: center;
 }
+.am-home-filter-dropdown--tag .am-home-filter-dropdown__tag-actions button { font-size: 13px; }
+.am-home-filter-dropdown--tag .am-home-filter-dropdown__tags { gap: 2px; }
 
 /* ============================================================
  * v2.3.0-hotfix：自定义颜色槽 × 删除徽标
