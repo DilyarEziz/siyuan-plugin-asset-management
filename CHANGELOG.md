@@ -4,6 +4,17 @@
 
 ## 中文
 
+### v2.6.6
+
+**删除更顺手、界面更稳定、过期订阅自动归入退役**
+
+- 改进：品牌和购买渠道现在随时可以删除——即使还有资产在用，删除时插件会把这些资产的品牌 / 渠道自动设为「未设置」，并提前告知会影响几项资产，不再需要先逐个改资产才能删。每一步都会记录在操作日志里，随时可查。
+- 改进：设置窗口高度固定不变——以插件主界面高度为基准，切换各个设置页时窗口不再忽高忽低；内容较多时在窗口内上下滚动查看。
+- 修复：直接新建的产品不再显示「种草历程」——只有真正经历过种草的产品（正在种草中，或从种草池购买而来）才展示种草时间和心动记录。
+- 新增：首页产品列表中，所有退役产品统一排到最后，与前面的产品之间以一条「已退役」分隔线区分，列表一目了然；卡片视图同样生效。
+- 改进：订阅到期后自动归入退役——不再停留在「在役」；首页筛选「在役」不再包含过期订阅，「已退役」则包含它们，首页与报表的在役 / 退役数字同步更新，在役金额与日均成本也不再计入已过期订阅。过期订阅卡片会显示灰色「已过期」标记，开通了自动续费的订阅仍按原样显示「待续订」。
+- 构建：版本号升至 `2.6.6`，同步更新双语 README、构建产物和发布包。
+
 ### v2.6.5
 
 **品牌与入手途径、筛选升级与报表维度分析**
@@ -296,6 +307,17 @@
 - 编辑预付权益时，价格字段预填首笔购买金额。
 
 ## English
+
+### v2.6.6
+
+**Smoother deletions, a steadier settings window, and expired subscriptions now count as retired**
+
+- Improved: brands and purchase channels can now be deleted at any time — even when assets still reference them. On deletion, the plugin clears the brand / channel from those assets (shown as "not set") and tells you upfront how many assets are affected, so there is no need to edit each asset first. Every step is recorded in the operation log for later review.
+- Improved: the settings window now keeps a fixed height — based on the plugin's main panel, it no longer grows and shrinks as you switch between settings pages; longer pages scroll inside the window.
+- Fixed: directly created products no longer show a "wishlist journey" — only products that truly went through the wishlist (still wished, or purchased from the wishlist pool) show their wish date and heartbeat records.
+- New: on the home page, all retired products are grouped at the bottom of the list, separated from the rest by a "Retired" divider line for a clear overview; the card view behaves the same.
+- Improved: expired subscriptions now count as retired — they no longer sit in the "Active" list; the "Active" filter excludes them while "Retired" includes them, and the active / retired numbers on the home page and in reports stay in sync. Expired subscriptions no longer count toward the active net total or daily average. Expired subscription cards show a grey "Expired" badge, while subscriptions with auto-renew on keep their "Pending renewal" badge as before.
+- Build: version bumped to `2.6.6`, with both READMEs, build output, and the release package updated accordingly.
 
 ### v2.6.5
 

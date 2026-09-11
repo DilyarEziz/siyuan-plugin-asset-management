@@ -441,7 +441,11 @@ function buildFormalReport(snapshot, filterInput, options) {
 
     cards.forEach(card => {
         incrementFormalGroup(report.counts.byKind, card.kind, 'counts.byKind');
-        incrementFormalGroup(report.counts.byStatus, card.status, 'counts.byStatus');
+        // v2.6.6：概览「在役 / 退役」按有效状态口径——过期订阅（在役实体 + 投影
+        // state === 'expired'）计入 retired，不再计入 active；与首页统计一致。
+        const effectiveStatus = (card.status === 'active' && card.subscription && card.subscription.state === 'expired')
+            ? 'retired' : card.status;
+        incrementFormalGroup(report.counts.byStatus, effectiveStatus, 'counts.byStatus');
         card.tagIds.forEach(tagId => {
             if (!hasOwn(report.tags.byTagId, tagId)) report.tags.byTagId[tagId] = { count: 0, assetIds: [] };
             report.tags.byTagId[tagId].count = safeAddFormal(report.tags.byTagId[tagId].count, 1, 'tags.count');

@@ -716,14 +716,16 @@
   "settingsCatalogTabChannels": "Channels",
   "settingsBrandsTitle": "Brand Management",
   "settingsChannelsTitle": "Channel Management",
-  "settingsCatalogHintBrands": "Manage the brand catalog. Brands in use cannot be deleted.",
-  "settingsCatalogHintChannels": "Manage the purchase channel catalog. Channels in use cannot be deleted.",
+  "settingsCatalogHintBrands": "Manage the brand catalog. Deleting a brand clears it from assets that reference it.",
+  "settingsCatalogHintChannels": "Manage the purchase-channel catalog. Deleting a channel clears it from assets that reference it.",
   "settingsCreateBrandBtn": "+ New Brand",
   "settingsCreateChannelBtn": "+ New Channel",
   "settingsDeleteBrandConfirmTitle": "Delete Brand",
   "settingsDeleteChannelConfirmTitle": "Delete Channel",
   "settingsDeleteBrandConfirmText": "Delete brand \"{label}\"? This cannot be undone.",
   "settingsDeleteChannelConfirmText": "Delete channel \"{label}\"? This cannot be undone.",
+  "settingsDeleteBrandReferencedHint": "{n} asset(s) reference this brand; deleting it will clear the brand from those assets.",
+  "settingsDeleteChannelReferencedHint": "{n} asset(s) reference this channel; deleting it will clear the channel from those assets.",
   "brandColorSwatchLabel": "Set brand color",
   "channelColorSwatchLabel": "Set channel color",
   "brandColorPickerTitle": "Brand Color",
@@ -1443,5 +1445,6 @@
   "brandDeleteReferenced": "This brand is still referenced by assets and cannot be deleted",
   "channelDeleteReferenced": "This channel is still referenced by assets and cannot be deleted",
   "brandSaveFailed": "Failed to save brand",
-  "channelSaveFailed": "Failed to save channel"
+  "channelSaveFailed": "Failed to save channel",
+  "homeRetiredDivider": "Retired"
 }

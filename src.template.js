@@ -1,10 +1,28 @@
 /* eslint-disable no-undef */
 /**
- * SiYuan 资产管理插件 v2.6.4 — 主模板（不带 IIFE）
+ * SiYuan 资产管理插件 v2.6.6 — 主模板（不带 IIFE）
  *
  * 通过 scripts/concat.js 把 api/*.js 拼接在顶部，生成单文件 index.js。
  *
- * 功能（v0.14.0 + v0.15-T6 + v0.16-T1 / T3 / T5 / T6 / T7 + v0.17-T1-β / T1-γ / T1-δ + v0.17-Hotfix-A + v0.17-T3-α / T3-β + v1.1.0 + v1.2.0 + v1.3.0 + v1.4.0 + v1.5.0 + v1.6.0 + v1.7.0 + v2.3.0 + v2.4.0 + v2.4.1 + v2.4.2 + v2.5.0 + v2.6.0 + v2.6.1 + v2.6.3 + v2.6.4）：
+ * 功能（v0.14.0 + v0.15-T6 + v0.16-T1 / T3 / T5 / T6 / T7 + v0.17-T1-β / T1-γ / T1-δ + v0.17-Hotfix-A + v0.17-T3-α / T3-β + v1.1.0 + v1.2.0 + v1.3.0 + v1.4.0 + v1.5.0 + v1.6.0 + v1.7.0 + v2.3.0 + v2.4.0 + v2.4.1 + v2.4.2 + v2.5.0 + v2.6.0 + v2.6.1 + v2.6.3 + v2.6.4 + v2.6.5 + v2.6.6）：
+ *
+ * v2.6.6（目录删除放开 + 设置弹窗定高 + 种草历程门卫 + 首页退役分组 + 过期即退役口径）：
+ *   - 品牌 / 渠道删除放开：被资产引用时不再拒绝删除，同一事务内自动把引用该项的
+ *       资产外键置空（同步刷新更新时间），并逐资产记 update 审计日志；删除确认弹窗
+ *       在有引用时提示受影响数量，设置页提示文案同步改写（标签仍保持原禁用逻辑）
+ *   - 设置弹窗高度固定：打开时以插件首页（dock 面板）实测高度为基准夹取
+ *       （≥480px，≤视口 88%，取不到回退 560px），切换 Tab 不再随内容跳动，
+ *       超出内容由内容区上下滚动
+ *   - 种草历程门卫：仅对正在种草中或存在种草转购买事件的商品渲染「种草历程」；
+ *       直接新建的商品不再把创建时间当成种草时间误显历程区
+ *   - 首页退役分组：列表与矩阵视图统一把退役产品排到最后，与非退役之间插入
+ *       「已退役」分割线（两组同时存在才渲染，组内保持当前排序）
+ *   - 「过期 = 退役」口径：在役订阅到期未续（未开自动续费）视同退役——
+ *       首页状态筛选（在役排除 / 已退役包含）、首页在役 / 退役统计、报表概览
+ *       在役 / 退役计数同步改口径；过期订阅卡片补灰色「已过期」徽章；
+ *       开了自动续费的待确认订阅维持原「待续订」在役设计
+ *   - 新增统一口径纯函数 isEffectivelyRetired（api/assets.js 导出），
+ *       applyFilter / computeStats / 报表计数 / 首页分组四处共用同一判定
  *
  * v2.6.4（首页筛选记忆 + 订阅月度支出口径修复 + 思源 3.8.3 内核适配 + AI 写操作事件驱动唤醒）：
  *   - 首页筛选记忆：手动改动状态 / 类型 / 排序 / 标签筛选后把快照写入
@@ -555,7 +573,7 @@
 const { Plugin, Dialog, Menu, openTab, openMobileFileById } = require("siyuan");
 
 const DOCK_TYPE = "asset-management-dock";
-const PLUGIN_VERSION = "2.6.5";
+const PLUGIN_VERSION = "2.6.6";
 const AUTHOR_URL = "https://ld246.com/member/Dilyar";
 const ICONS8_URL = "https://icons8.com";
 
@@ -5553,18 +5571,35 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
             </div>`;
     }
 
+    /** v2.6.6：首页「已退役」分割线（列表与矩阵视图共用）。仅当同屏同时存在非退役与
+     * 退役（含过期订阅，见 isEffectivelyRetired 口径）两组时渲染；i18n 键 homeRetiredDivider。 */
+    _renderHomeRetiredDividerHtml() {
+        return `<div class="am-retired-divider" role="separator" aria-label="${escapeHtml(this._t('homeRetiredDivider', '已退役'))}"><span class="am-retired-divider__line"></span><span class="am-retired-divider__label">${escapeHtml(this._t('homeRetiredDivider', '已退役'))}</span><span class="am-retired-divider__line"></span></div>`;
+    }
+
     renderFormalAssetCollection(assets) {
         if (!assets.length) return this.renderEmptyPage("📦", this._t("emptyAssets"), this._t("emptyHint"));
         const mode = this.settings.viewMode || "list";
-        if (mode === "matrix") {
-            // v0.13.13：class 标识（不用 id，modal 内 grid 不会被覆盖）
-            // v1.7-P2：初始 data-cols 由纯函数给出——手选 2/3/4 直接生效；auto 且宽度未知
-            // （渲染时拿不到容器宽）默认 2 列，挂载后 _setupMatrixResizeObserver 立即按实测宽度修正。
-            const pref = this.settings.matrixCols == null ? 'auto' : this.settings.matrixCols;
-            const cols = this._matrixColsForWidth(0, pref);
-            return `<div class="am-asset-grid" data-cols="${cols}">${assets.map(a => this.renderFormalAssetMatrixCard(a)).join("")}</div>`;
-        }
-        return assets.map(a => this.renderFormalAssetListCard(a)).join("");
+        // v2.6.6：首页分组展示——非退役（在役 + 种草由上层过滤）在前，退役在后；
+        // 过期订阅按「过期 = 退役」口径归入退役组（isEffectivelyRetired，
+        // 订阅周期记录取内存缓存）。两组都有时中间插「已退役」分割线；组内保持原排序。
+        const retiredSet = new Set();
+        const allPeriods = Array.isArray(this._subscriptionPeriods) ? this._subscriptionPeriods : [];
+        assets.forEach(asset => { if (isEffectivelyRetired(asset, allPeriods)) retiredSet.add(asset.id); });
+        const activeList = assets.filter(asset => !retiredSet.has(asset.id));
+        const retiredList = assets.filter(asset => retiredSet.has(asset.id));
+        const dividerHtml = (activeList.length && retiredList.length) ? this._renderHomeRetiredDividerHtml() : '';
+        const cardRenderer = mode === "matrix"
+            ? a => this.renderFormalAssetMatrixCard(a)
+            : a => this.renderFormalAssetListCard(a);
+        const body = activeList.map(cardRenderer).join("") + dividerHtml + retiredList.map(cardRenderer).join("");
+        if (mode !== "matrix") return body;
+        // v0.13.13：class 标识（不用 id，modal 内 grid 不会被覆盖）
+        // v1.7-P2：初始 data-cols 由纯函数给出——手选 2/3/4 直接生效；auto 且宽度未知
+        // （渲染时拿不到容器宽）默认 2 列，挂载后 _setupMatrixResizeObserver 立即按实测宽度修正。
+        const pref = this.settings.matrixCols == null ? 'auto' : this.settings.matrixCols;
+        const cols = this._matrixColsForWidth(0, pref);
+        return `<div class="am-asset-grid" data-cols="${cols}">${body}</div>`;
     }
 
     /** Resolve every persisted cover variant to one render contract. */
@@ -6496,37 +6531,49 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
     }
 
     /**
-     * v2.6.5 阶段2a：删除目录条目。删除保护 = 被任何资产引用（asset.brandId /
-     * asset.channelId）时抛错；返回 boolean。
+     * v2.6.6：删除目录条目。被资产引用时不再阻止删除——同一事务内把所有引用
+     * （asset.brandId / asset.channelId）置为 null（同步刷新 updatedAt），并为每个
+     * 被置空的资产记一条 update 审计日志；目录条目本身照常记 brand/channel-delete。
+     * 返回 { deleted: boolean, clearedRefs: number }（调用方只读 boolean 时取 .deleted）。
      */
     async _deleteDimensionEntry(kind, entryId) {
-        if (!entryId) return false;
+        if (!entryId) return { deleted: false, clearedRefs: 0 };
         if (!this.storage || typeof this.storage.mutateFormalAssetDomain !== 'function') {
             throw new Error('[AssetManagement] formal dimension storage unavailable');
         }
         const target = String(entryId).trim().toLowerCase();
         const refKey = kind === 'brands' ? 'brandId' : 'channelId';
         const prefix = this._dimensionAuditPrefix(kind);
-        const referencedKey = kind === 'brands' ? 'brandDeleteReferenced' : 'channelDeleteReferenced';
-        const referencedText = kind === 'brands' ? '该品牌仍被资产引用，无法删除' : '该购买渠道仍被资产引用，无法删除';
         const context = await this._commitAssetAuditMutation(snapshot => {
             const wrapper = snapshot.dimensions || {};
             const brands = Array.isArray(wrapper.brands) ? wrapper.brands : [];
             const channels = Array.isArray(wrapper.channels) ? wrapper.channels : [];
             const directory = kind === 'brands' ? brands : channels;
             const entry = directory.find(item => item && String(item.id || '').toLowerCase() === target);
-            if (!entry) return { noop: true, context: { deleted: false } };
-            if (snapshot.assets.some(asset => String((asset && asset[refKey]) || '').toLowerCase() === target)) {
-                throw new Error(this._t(referencedKey, referencedText));
-            }
-            const log = { id: createStableId(), type: prefix + '-delete', assetId: entry.id, assetName: entry.label,
-                field: null, oldValue: this._cloneForSnapshot(entry), newValue: null, ts: new Date().toISOString() };
+            if (!entry) return { noop: true, context: { deleted: false, clearedRefs: 0 } };
+            const now = new Date().toISOString();
+            const logs = [{ id: createStableId(), type: prefix + '-delete', assetId: entry.id, assetName: entry.label,
+                field: null, oldValue: this._cloneForSnapshot(entry), newValue: null, ts: now }];
+            // v2.6.6：引用置空（级联）。每个受影响资产一条 update 日志（field = brandId/channelId），
+            // 快照前后均为此前已验证的 canonical 资产，可通过 formal 事务审计校验。
+            let clearedRefs = 0;
+            const nextAssets = (Array.isArray(snapshot.assets) ? snapshot.assets : []).map(asset => {
+                if (!asset || String(asset[refKey] || '').toLowerCase() !== target) return asset;
+                clearedRefs += 1;
+                const before = this._cloneForSnapshot(asset);
+                const after = Object.assign({}, asset);
+                after[refKey] = null;
+                after.updatedAt = now;
+                logs.push({ id: createStableId(), type: 'update', assetId: asset.id, assetName: asset.name,
+                    field: refKey, oldValue: before, newValue: after, ts: now });
+                return after;
+            });
             const nextDimensions = kind === 'brands'
                 ? { brands: brands.filter(item => !item || String(item.id || '').toLowerCase() !== target), channels: channels }
                 : { brands: brands, channels: channels.filter(item => !item || String(item.id || '').toLowerCase() !== target) };
-            return { dimensions: nextDimensions, operationLogs: [log].concat(snapshot.operationLogs || []), context: { deleted: true } };
+            return { assets: nextAssets, dimensions: nextDimensions, operationLogs: logs.concat(snapshot.operationLogs || []), context: { deleted: true, clearedRefs: clearedRefs } };
         });
-        return !!(context && context.deleted);
+        return { deleted: !!(context && context.deleted), clearedRefs: Number(context && context.clearedRefs) || 0 };
     }
 
     /** v2.6.5 阶段2a：目录条目颜色更新（镜像 updateTag 的 color 路径），返回 boolean */
@@ -6559,7 +6606,7 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
         return !!(context && context.updated);
     }
 
-    /** v2.6.5 阶段2a：品牌目录对外方法（镜像 createTag/deleteTag/updateTag 形态） */
+    /** v2.6.5 阶段2a：品牌目录对外方法（镜像 createTag/deleteTag/updateTag 形态）。v2.6.6 起 deleteBrand 级联置空引用，不再拒删。 */
     async createBrand(options) { return this._createDimensionEntry('brands', (options || {}).label); }
     async deleteBrand(brandId) { return this._deleteDimensionEntry('brands', brandId); }
     async updateBrandColor(brandId, color) { return this._updateDimensionColor('brands', brandId, color); }
@@ -9063,7 +9110,13 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
     /** 已购买资产的种草来源摘要，读取 purchased 事件快照与 heartbeat 事件，不写入数据。 */
     _renderWishlistJourneySectionHtml(asset) {
         if (!asset) return '';
-        const events = Array.isArray(this.wishlistEvents) ? this.wishlistEvents : [];
+        // v2.6.6：仅对真正种草过的商品渲染「种草历程」——要么正在种草中（status = wishlist），
+        // 要么存在种草转购买事件（purchased，含 sourceSnapshot 证明经历过种草流程）。
+        // 直接新建的商品（无种草历史）不再用 createdAt 伪造成“种草时间”，整块不渲染。
+        const allEvents = Array.isArray(this.wishlistEvents) ? this.wishlistEvents : [];
+        const hasPurchaseEvent = allEvents.some(event => event && event.eventType === 'purchased' && event.targetAssetId === asset.id);
+        if (asset.status !== 'wishlist' && !hasPurchaseEvent) return '';
+        const events = allEvents;
         const purchase = events.filter(event => event && event.eventType === 'purchased'
             && event.targetAssetId === asset.id).sort((a, b) => String(b.occurredAt || '').localeCompare(String(a.occurredAt || '')))[0];
         const source = purchase ? (purchase.sourceSnapshot || {}) : asset;
@@ -10122,8 +10175,24 @@ closeProductCard() {
 
     openSettingsDialog() {
         const tab = "general";
+        // v2.6.6：设置弹窗高度固定——以插件首页（dock 面板）高度为基准，切换 Tab 不再
+        // 随内容高度跳动；内容超出时由 .am-settings__content 上下滚动。
+        //   - 基准：dock 元素实测高度；拿不到（dock 隐藏 / modal 模式）时回退 560px。
+        //   - 夹取：≥ 480px（视觉下限），≤ 视口高度 88%（不顶出屏幕）。
+        const settingsDialogHeight = (() => {
+            let base = 0;
+            try {
+                if (this.dockElement && typeof this.dockElement.getBoundingClientRect === 'function') {
+                    base = Math.round(this.dockElement.getBoundingClientRect().height || 0);
+                }
+            } catch (error) { base = 0; }
+            const viewport = (typeof window !== 'undefined' && window.innerHeight) || 0;
+            let height = base > 0 ? base : 560;
+            if (viewport > 0) height = Math.min(height, Math.round(viewport * 0.88));
+            return Math.max(height, 480);
+        })();
         const renderShell = () => `
-            <div class="am-settings-dialog">
+            <div class="am-settings-dialog" style="height:${settingsDialogHeight}px">
                 <div class="am-settings__sidebar">
                     <button class="am-settings__tab am-settings__tab--active" data-tab="general">${escapeHtml(this._t("settingsTabGeneral", "常规"))}</button>
                     <button class="am-settings__tab" data-tab="data">${escapeHtml(this._t("settingsTabData", "数据"))}</button>
@@ -10440,11 +10509,13 @@ closeProductCard() {
                             isBrand ? '删除品牌' : '删除渠道'),
                         text: this._t(isBrand ? 'settingsDeleteBrandConfirmText' : 'settingsDeleteChannelConfirmText',
                             isBrand ? '确定删除品牌「{label}」吗？此操作不可撤销。' : '确定删除渠道「{label}」吗？此操作不可撤销。',
-                            { label: entry.label }),
+                            { label: entry.label })
+                            + (refs > 0 ? '<br/>' + escapeHtml(this._t(isBrand ? 'settingsDeleteBrandReferencedHint' : 'settingsDeleteChannelReferencedHint',
+                                isBrand ? '该品牌正被 {n} 项资产引用，删除后这些资产的品牌将设为未设置。' : '该渠道正被 {n} 项资产引用，删除后这些资产的渠道将设为未设置。', { n: refs })) : ''),
                         onConfirm: async () => {
                             try {
-                                const deleted = isBrand ? await this.deleteBrand(entryId) : await this.deleteChannel(entryId);
-                                if (deleted) restoreTab();
+                                const result = isBrand ? await this.deleteBrand(entryId) : await this.deleteChannel(entryId);
+                                if (result && result.deleted) restoreTab();
                             } catch (error) {
                                 this.showToast('⚠️ ' + String(error && error.message || error));
                             }
@@ -11146,7 +11217,10 @@ closeProductCard() {
             const deleteAttr = kind === 'tags'
                 ? ` data-settings-tag-delete="${escapeHtml(entry.id || '')}"`
                 : ` data-settings-entry-delete="${escapeHtml(entry.id || '')}"`;
-            return `<div class="am-settings-tag-row"><button type="button" class="am-tag-color-swatch${entry.color ? '' : ' am-tag-color-swatch--empty'}"${colorAttr}${kindAttr}${swatchStyle} title="${swatchLabel}" aria-label="${swatchLabel}"></button><span>${escapeHtml(entry.label)}</span><span class="am-settings-tag-row__count">${escapeHtml(this._t('tagReferenceCount', '{n} 项资产引用', { n: refs }))}</span><button class="b3-button b3-button--remove"${deleteAttr}${kindAttr} ${refs ? 'disabled' : ''}>${escapeHtml(this._t('tagManagerDelete', '删除'))}</button></div>`;
+            // v2.6.6：品牌 / 渠道删除不再因引用禁用（标签保持原禁用逻辑）；
+            // 删除时有引用则确认弹窗内提示将自动取消引用。
+            const deleteDisabled = kind === 'tags' && refs ? ' disabled' : '';
+            return `<div class="am-settings-tag-row"><button type="button" class="am-tag-color-swatch${entry.color ? '' : ' am-tag-color-swatch--empty'}"${colorAttr}${kindAttr}${swatchStyle} title="${swatchLabel}" aria-label="${swatchLabel}"></button><span>${escapeHtml(entry.label)}</span><span class="am-settings-tag-row__count">${escapeHtml(this._t('tagReferenceCount', '{n} 项资产引用', { n: refs }))}</span><button class="b3-button b3-button--remove"${deleteAttr}${kindAttr}${deleteDisabled}>${escapeHtml(this._t('tagManagerDelete', '删除'))}</button></div>`;
         };
         const tabDefs = [
             ['tags', 'settingsCatalogTabTags', '标签'],
@@ -11166,11 +11240,11 @@ closeProductCard() {
         } else if (catalogTab === 'brands') {
             const brands = this._getDimensionDirectory('brands');
             const rows = brands.length ? brands.map(entry => rowHtml(entry, 'brands')).join('') : `<div class="am-tag-manager-empty">${escapeHtml(this._t('brandManagerEmpty', '暂无品牌'))}</div>`;
-            bodyHtml = `<h3>${escapeHtml(this._t('settingsBrandsTitle', '品牌管理'))}</h3><p class="am-settings__hint">${escapeHtml(this._t('settingsCatalogHintBrands', '管理品牌目录。品牌被引用时不可删除。'))}</p><div class="am-settings-tag-create"><input class="b3-text-field" type="text" name="settingsBrandLabel" maxlength="20" placeholder="${escapeHtml(this._t('brandFieldLabel', '品牌名'))}"/><button class="b3-button b3-button--primary" data-action="settings-create-brand">${escapeHtml(this._t('settingsCreateBrandBtn', '+ 新建品牌'))}</button></div><div class="am-settings-tag-list">${rows}</div>`;
+            bodyHtml = `<h3>${escapeHtml(this._t('settingsBrandsTitle', '品牌管理'))}</h3><p class="am-settings__hint">${escapeHtml(this._t('settingsCatalogHintBrands', '管理品牌目录。删除品牌时，引用它的资产会自动取消该品牌。'))}</p><div class="am-settings-tag-create"><input class="b3-text-field" type="text" name="settingsBrandLabel" maxlength="20" placeholder="${escapeHtml(this._t('brandFieldLabel', '品牌名'))}"/><button class="b3-button b3-button--primary" data-action="settings-create-brand">${escapeHtml(this._t('settingsCreateBrandBtn', '+ 新建品牌'))}</button></div><div class="am-settings-tag-list">${rows}</div>`;
         } else {
             const channels = this._getDimensionDirectory('channels');
             const rows = channels.length ? channels.map(entry => rowHtml(entry, 'channels')).join('') : `<div class="am-tag-manager-empty">${escapeHtml(this._t('channelManagerEmpty', '暂无购买渠道'))}</div>`;
-            bodyHtml = `<h3>${escapeHtml(this._t('settingsChannelsTitle', '渠道管理'))}</h3><p class="am-settings__hint">${escapeHtml(this._t('settingsCatalogHintChannels', '管理购买渠道目录。渠道被引用时不可删除。'))}</p><div class="am-settings-tag-create"><input class="b3-text-field" type="text" name="settingsChannelLabel" maxlength="20" placeholder="${escapeHtml(this._t('channelFieldLabel', '购买渠道名'))}"/><button class="b3-button b3-button--primary" data-action="settings-create-channel">${escapeHtml(this._t('settingsCreateChannelBtn', '+ 新建渠道'))}</button></div><div class="am-settings-tag-list">${rows}</div>`;
+            bodyHtml = `<h3>${escapeHtml(this._t('settingsChannelsTitle', '渠道管理'))}</h3><p class="am-settings__hint">${escapeHtml(this._t('settingsCatalogHintChannels', '管理购买渠道目录。删除渠道时，引用它的资产会自动取消该渠道。'))}</p><div class="am-settings-tag-create"><input class="b3-text-field" type="text" name="settingsChannelLabel" maxlength="20" placeholder="${escapeHtml(this._t('channelFieldLabel', '购买渠道名'))}"/><button class="b3-button b3-button--primary" data-action="settings-create-channel">${escapeHtml(this._t('settingsCreateChannelBtn', '+ 新建渠道'))}</button></div><div class="am-settings-tag-list">${rows}</div>`;
         }
         return `<div class="am-settings__section am-settings-tags">${catalogTabsHtml}${bodyHtml}</div>`;
     }
@@ -11766,7 +11840,7 @@ closeProductCard() {
 
     /** 到期徽章（列表/矩阵卡内联兜底，算法等价 concat.js 解构的 formatRemainingBadge）。无到期 / 非法日期返回空串。
      *  需求3（D4）：订阅 pendingConfirmation（开了自动续费、到期未确认续订）显示黄色「待续订」；复用现有 soon 黄色档，不新增 CSS tier。
-     *  需求5：过期档（daysLeft<0）不再渲染「已过期」徽章，改由状态点灰显（dotState=expired）；仅保留 urgent/soon/normal 档。 */
+     *  v2.6.6：过期档（daysLeft<0 或订阅投影 state=expired）改渲染灰色「已过期」徽章（过期=退役口径，卡上需可见标识），配合首页「已退役」分组。 */
     _formalExpiryBadgeHtml(expiryOn, subState) {
         if (!expiryOn) return '';
         if (subState === 'pendingConfirmation') {
@@ -11774,7 +11848,11 @@ closeProductCard() {
         }
         const daysLeft = daysUntil(expiryOn, todayISO());
         if (!Number.isFinite(daysLeft)) return '';
-        if (daysLeft < 0) return '';
+        // v2.6.6：过期订阅归入首页「已退役」分组后，卡上补灰色「已过期」徽章
+        // （此前仅灰点无文字），用户无需靠分割线猜测归类原因。
+        if (daysLeft < 0 || subState === 'expired') {
+            return `<span class="am-card-badge am-card-badge--expired">${escapeHtml(this._t('badgeExpired', '已过期'))}</span>`;
+        }
         let tier, label;
         if (daysLeft === 0) { tier = 'urgent'; label = this._t('badgeToday', '今日到期'); }
         else if (daysLeft <= 7) { tier = 'urgent'; label = daysLeft + ' ' + this._t('badgeDaysLeft', '天后到期'); }
@@ -11871,6 +11949,8 @@ closeProductCard() {
         const domain = this._formalDomainSnapshot();
         return applyFilter(domain.assets.filter(asset => asset.status !== 'wishlist'), Object.assign({}, this.filter, {
             financialEvents: domain.financialEvents,
+            // v2.6.6：状态筛选按「过期 = 退役」口径，注入订阅周期记录供有效状态判定。
+            subscriptionPeriods: domain.subscriptionPeriods,
         }));
     }
 

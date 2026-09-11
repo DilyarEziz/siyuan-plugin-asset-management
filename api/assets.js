@@ -1330,6 +1330,26 @@ function getSubscriptionPeriodEnd(startDate, cycle) {
     return nextStart ? addBusinessDays(nextStart, -1) : null;
 }
 
+/**
+ * v2.6.6：「过期订阅视同退役」统一口径判定（首页分组 / 状态筛选 / 统计 / 报表概览共用）。
+ *   - status = 'retired' → true；wishlist → false。
+ *   - 在役订阅投影 state === 'expired'（当期周期已结束且未开自动续费）→ true；
+ *     pendingConfirmation（开自动续费到期未确认）仍算在役，维持既有设计。
+ *   - 其余类型 / 投影异常一律 false（fail-open 为在役，不阻断渲染）。
+ * 纯读函数：只读入参，不写任何状态。periods 可传全量记录（内部按 assetId 过滤）。
+ */
+function isEffectivelyRetired(asset, periods, today) {
+    if (!asset) return false;
+    if (asset.status === ASSET_STATUS.RETIRED) return true;
+    if (asset.status !== ASSET_STATUS.ACTIVE) return false;
+    if (asset.kind !== FORMAL_ASSET_KIND.VIRTUAL_SUBSCRIPTION) return false;
+    try {
+        const records = (Array.isArray(periods) ? periods : []).filter(record => record && record.assetId === asset.id);
+        const projection = projectFormalSubscription(asset, records, today);
+        return !!projection && projection.state === 'expired';
+    } catch (error) { return false; }
+}
+
 function sortAssets(assets, sortId, financialEvents) {
     const list = assets.slice();
     const acquisition = asset => {
@@ -1371,7 +1391,20 @@ function applyFilter(assets, filter) {
         const kinds = Array.isArray(filter.kind) ? filter.kind : [filter.kind];
         list = list.filter(a => kinds.includes(a.kind));
     }
-    if (filter.status && filter.status !== 'all') list = list.filter(a => a.status === filter.status);
+    // v2.6.6：状态筛选按「有效状态」口径——在役排除过期订阅，已退役包含过期订阅。
+    // 订阅周期记录经 filter.subscriptionPeriods 注入（与 financialEvents 同模式），
+    // 缺省时退回纯 status 字段过滤（既有测试与调用方零破坏）。
+    if (filter.status && filter.status !== 'all') {
+        if (filter.status === 'active') {
+            const periods = Array.isArray(filter.subscriptionPeriods) ? filter.subscriptionPeriods : [];
+            list = list.filter(a => a.status === 'active' && !isEffectivelyRetired(a, periods));
+        } else if (filter.status === 'retired') {
+            const periods = Array.isArray(filter.subscriptionPeriods) ? filter.subscriptionPeriods : [];
+            list = list.filter(a => isEffectivelyRetired(a, periods));
+        } else {
+            list = list.filter(a => a.status === filter.status);
+        }
+    }
     if (filter.categoryId && filter.categoryId !== 'all') list = list.filter(a => a.categoryId === filter.categoryId);
     if (filter.search) {
         const q = filter.search.toLowerCase().trim();
@@ -1446,12 +1479,14 @@ function formalDailyAmountMinor(input) {
 }
 
 function computeStats(assets, financialEvents, subscriptionPeriods) {
-    const active = assets.filter(a => a.status === 'active');
-    const retired = assets.filter(a => a.status === 'retired');
+    // v2.6.6：在役 / 退役分桶改按「有效状态」口径——过期订阅计入退役，不再
+    // 计入在役数量与净额 / 日均聚合（与报表「净额只累计在役」口径对齐）。
+    const allPeriods = subscriptionPeriods || [];
+    const active = assets.filter(a => a.status === 'active' && !isEffectivelyRetired(a, allPeriods));
+    const retired = assets.filter(a => isEffectivelyRetired(a, allPeriods));
     const wishlist = assets.filter(a => a.status === 'wishlist');
     const byCurrency = Object.create(null);
     const allFinancialEvents = financialEvents || [];
-    const allPeriods = subscriptionPeriods || [];
     active.forEach(asset => {
         if (!isFormalKind(asset.kind)) return;
         const assetEvents = allFinancialEvents.filter(event => event && event.assetId === asset.id);
@@ -1559,6 +1594,7 @@ module.exports = {
     projectFormalCostGoalByDate: projectFormalCostGoalByDate,
     projectFormalAsset: projectFormalAsset,
     sortAssets: sortAssets,
+    isEffectivelyRetired: isEffectivelyRetired,
     formalDailyAmountMinor: formalDailyAmountMinor,
     computeStats: computeStats,
     applyFilter: applyFilter,

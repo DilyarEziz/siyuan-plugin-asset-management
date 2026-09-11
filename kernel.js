@@ -2205,6 +2205,17 @@ function getSubscriptionPeriodEnd(startDate, cycle) {
     const nextStart = addBillingCycle(startDate, cycle);
     return nextStart ? addBusinessDays(nextStart, -1) : null;
 }
+function isEffectivelyRetired(asset, periods, today) {
+    if (!asset) return false;
+    if (asset.status === ASSET_STATUS.RETIRED) return true;
+    if (asset.status !== ASSET_STATUS.ACTIVE) return false;
+    if (asset.kind !== FORMAL_ASSET_KIND.VIRTUAL_SUBSCRIPTION) return false;
+    try {
+        const records = (Array.isArray(periods) ? periods : []).filter(record => record && record.assetId === asset.id);
+        const projection = projectFormalSubscription(asset, records, today);
+        return !!projection && projection.state === 'expired';
+    } catch (error) { return false; }
+}
 
 function sortAssets(assets, sortId, financialEvents) {
     const list = assets.slice();
@@ -2247,7 +2258,17 @@ function applyFilter(assets, filter) {
         const kinds = Array.isArray(filter.kind) ? filter.kind : [filter.kind];
         list = list.filter(a => kinds.includes(a.kind));
     }
-    if (filter.status && filter.status !== 'all') list = list.filter(a => a.status === filter.status);
+    if (filter.status && filter.status !== 'all') {
+        if (filter.status === 'active') {
+            const periods = Array.isArray(filter.subscriptionPeriods) ? filter.subscriptionPeriods : [];
+            list = list.filter(a => a.status === 'active' && !isEffectivelyRetired(a, periods));
+        } else if (filter.status === 'retired') {
+            const periods = Array.isArray(filter.subscriptionPeriods) ? filter.subscriptionPeriods : [];
+            list = list.filter(a => isEffectivelyRetired(a, periods));
+        } else {
+            list = list.filter(a => a.status === filter.status);
+        }
+    }
     if (filter.categoryId && filter.categoryId !== 'all') list = list.filter(a => a.categoryId === filter.categoryId);
     if (filter.search) {
         const q = filter.search.toLowerCase().trim();
@@ -2285,12 +2306,12 @@ function formalDailyAmountMinor(input) {
 }
 
 function computeStats(assets, financialEvents, subscriptionPeriods) {
-    const active = assets.filter(a => a.status === 'active');
-    const retired = assets.filter(a => a.status === 'retired');
+    const allPeriods = subscriptionPeriods || [];
+    const active = assets.filter(a => a.status === 'active' && !isEffectivelyRetired(a, allPeriods));
+    const retired = assets.filter(a => isEffectivelyRetired(a, allPeriods));
     const wishlist = assets.filter(a => a.status === 'wishlist');
     const byCurrency = Object.create(null);
     const allFinancialEvents = financialEvents || [];
-    const allPeriods = subscriptionPeriods || [];
     active.forEach(asset => {
         if (!isFormalKind(asset.kind)) return;
         const assetEvents = allFinancialEvents.filter(event => event && event.assetId === asset.id);
@@ -2397,6 +2418,7 @@ function computeStats(assets, financialEvents, subscriptionPeriods) {
     projectFormalCostGoalByDate: projectFormalCostGoalByDate,
     projectFormalAsset: projectFormalAsset,
     sortAssets: sortAssets,
+    isEffectivelyRetired: isEffectivelyRetired,
     formalDailyAmountMinor: formalDailyAmountMinor,
     computeStats: computeStats,
     applyFilter: applyFilter,};
@@ -2812,7 +2834,9 @@ function buildFormalReport(snapshot, filterInput, options) {
 
     cards.forEach(card => {
         incrementFormalGroup(report.counts.byKind, card.kind, 'counts.byKind');
-        incrementFormalGroup(report.counts.byStatus, card.status, 'counts.byStatus');
+        const effectiveStatus = (card.status === 'active' && card.subscription && card.subscription.state === 'expired')
+            ? 'retired' : card.status;
+        incrementFormalGroup(report.counts.byStatus, effectiveStatus, 'counts.byStatus');
         card.tagIds.forEach(tagId => {
             if (!hasOwn(report.tags.byTagId, tagId)) report.tags.byTagId[tagId] = { count: 0, assetIds: [] };
             report.tags.byTagId[tagId].count = safeAddFormal(report.tags.byTagId[tagId].count, 1, 'tags.count');

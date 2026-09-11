@@ -716,14 +716,16 @@
   "settingsCatalogTabChannels": "渠道",
   "settingsBrandsTitle": "品牌管理",
   "settingsChannelsTitle": "渠道管理",
-  "settingsCatalogHintBrands": "管理品牌目录。品牌被引用时不可删除。",
-  "settingsCatalogHintChannels": "管理购买渠道目录。渠道被引用时不可删除。",
+  "settingsCatalogHintBrands": "管理品牌目录。删除品牌时，引用它的资产会自动取消该品牌。",
+  "settingsCatalogHintChannels": "管理购买渠道目录。删除渠道时，引用它的资产会自动取消该渠道。",
   "settingsCreateBrandBtn": "+ 新建品牌",
   "settingsCreateChannelBtn": "+ 新建渠道",
   "settingsDeleteBrandConfirmTitle": "删除品牌",
   "settingsDeleteChannelConfirmTitle": "删除渠道",
   "settingsDeleteBrandConfirmText": "确定删除品牌「{label}」吗？此操作不可撤销。",
   "settingsDeleteChannelConfirmText": "确定删除渠道「{label}」吗？此操作不可撤销。",
+  "settingsDeleteBrandReferencedHint": "该品牌正被 {n} 项资产引用，删除后这些资产的品牌将设为未设置。",
+  "settingsDeleteChannelReferencedHint": "该渠道正被 {n} 项资产引用，删除后这些资产的渠道将设为未设置。",
   "brandColorSwatchLabel": "设置品牌颜色",
   "channelColorSwatchLabel": "设置渠道颜色",
   "brandColorPickerTitle": "品牌颜色",
@@ -1443,5 +1445,6 @@
   "brandDeleteReferenced": "该品牌仍被资产引用，无法删除",
   "channelDeleteReferenced": "该购买渠道仍被资产引用，无法删除",
   "brandSaveFailed": "品牌保存失败",
-  "channelSaveFailed": "购买渠道保存失败"
+  "channelSaveFailed": "购买渠道保存失败",
+  "homeRetiredDivider": "已退役"
 }

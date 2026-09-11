@@ -207,6 +207,8 @@ function getDestructureBlock() {
         '    formalDailyAmountMinor,',
         '    computeStats,',
         '    applyFilter,',
+        // v2.6.6：过期即退役统一口径判定（首页分组渲染用）。
+        '    isEffectivelyRetired,',
         '} = __am_assets;',
         'const { createStorage, DEFAULT_SETTINGS, OPERATION_LOG_MAX } = __am_storage;',
         'const agentActions = __am_agent_actions;',
