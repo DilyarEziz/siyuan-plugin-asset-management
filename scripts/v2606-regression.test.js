@@ -113,14 +113,32 @@ function injectExpiredSubscription(plugin, fixture) {
         assert.match(tagsHtml, /data-settings-tag-delete[^>]* disabled|disabled[^>]*data-settings-tag-delete/, 'tag delete stays disabled when referenced');
     }
 
-    // ---------- 2. 设置弹窗高度固定 ----------
+    // ---------- 2. 设置弹窗高度固定 + 确认弹窗挂载点提升 ----------
     {
         const h = createHarness([asset(P_ID, 'physical', 'Camera')]);
         h.plugin.openSettingsDialog();
         await flushDialog();
-        const shell = h.connectedDialogs()[0].element.querySelector('.am-settings-dialog');
+        const settingsDialog = h.connectedDialogs()[0];
+        const shell = settingsDialog.element.querySelector('.am-settings-dialog');
         assert.ok(shell, 'settings shell rendered');
         assert.match(String(shell.getAttribute('style') || ''), /height:\s*\d+px/, 'settings dialog height is fixed inline');
+
+        // v2.6.6 修复回归：设置弹窗内点删除 → 确认遮罩必须挂在 .b3-dialog（fixed 全屏层），
+        // 不能直挂思源 Dialog 外层 wrapper（文档流普通 div，高度 0、位于视口底部之外）。
+        const brand = await h.plugin.createBrand({ label: 'ToDel' });
+        h.plugin._settingsCatalogTab = 'brands';
+        h.document.querySelector('[data-settings-tab="tags"]').onclick();
+        const deleteBtn = h.document.querySelector(`[data-settings-entry-delete="${brand.id}"]`);
+        assert.ok(deleteBtn, 'brand delete button rendered');
+        assert.equal(deleteBtn.disabled, false, 'brand delete button enabled with zero refs');
+        deleteBtn.onclick();
+        const maskInDialog = settingsDialog.element.querySelector(':scope > .b3-dialog > .am-plugin-confirm-mask');
+        assert.ok(maskInDialog, 'scoped confirm mask mounted on fixed .b3-dialog layer, not the flow wrapper');
+        assert.equal(maskInDialog.className.includes('am-plugin-confirm-mask--fallback'), false, 'no fallback class when mounted on b3-dialog');
+        assert.ok(maskInDialog.querySelector('.am-plugin-confirm'), 'confirm card rendered inside mask');
+        // Esc/关闭路径：_closeScopedConfirm(root) 用原 host 也能清理（WeakMap key 一致）
+        maskInDialog.querySelector('[data-scoped-confirm-cancel]').onclick();
+        assert.equal(settingsDialog.element.querySelector(':scope > .b3-dialog > .am-plugin-confirm-mask'), null, 'close resolves the same host key');
     }
 
     // ---------- 3. 种草历程门卫 ----------

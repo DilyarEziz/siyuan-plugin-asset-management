@@ -23,6 +23,10 @@
  *       开了自动续费的待确认订阅维持原「待续订」在役设计
  *   - 新增统一口径纯函数 isEffectivelyRetired（api/assets.js 导出），
  *       applyFilter / computeStats / 报表计数 / 首页分组四处共用同一判定
+ *   - 修复（v2.6.6 追加）：设置弹窗内删除确认弹窗跑到视口外——思源 Dialog 的
+ *       element 是文档流内外层 wrapper（高度 0、位于视口底部之外），全屏层是内部
+ *       .b3-dialog（fixed）；_openScopedConfirm 检测到该结构时提升挂载到 .b3-dialog，
+ *       确认遮罩与卡片始终全屏居中；开/关共用解析保证清理路径一致
  *
  * v2.6.4（首页筛选记忆 + 订阅月度支出口径修复 + 思源 3.8.3 内核适配 + AI 写操作事件驱动唤醒）：
  *   - 首页筛选记忆：手动改动状态 / 类型 / 排序 / 标签筛选后把快照写入
@@ -9738,11 +9742,30 @@ openWishlistAbandonSheet(id) {
      * mask 挂载在调用方 host（dock / modal / 详情卡 host）内，position:absolute inset:0
      * 只覆盖插件面板；host 缺失回退 body 时改 fixed（--fallback）。视觉复用
      * confirmDelete 的 .am-plugin-confirm 玻璃卡片。Esc / 遮罩点击 / 取消 均关闭。
+     * v2.6.6 修复：思源 Dialog 的 element 是文档流内外层普通 wrapper（无样式时高度 0、
+     * 位置在 body 流末尾，约在视口底部之外），真正的全屏层是它内部的 .b3-dialog（fixed）。
+     * 直接把 absolute 遮罩挂在 wrapper 上会脱离视口——确认卡片跑到屏幕外。检测到
+     * 思源 Dialog 结构时提升挂载到 .b3-dialog，遮罩与确认卡片始终全屏居中；
+     * WeakMap key 仍用原 host，_closeScopedConfirm 的清理路径不受影响。
      * @returns {HTMLElement} mask
      */
+    /** v2.6.6：确认弹窗挂载点解析（开/关共用，保证 WeakMap key 一致）。见 _openScopedConfirm 注释。 */
+    _resolveScopedConfirmHost(host) {
+        let target = (host && host.appendChild) ? host : null;
+        if (!target) {
+            const fallback = (typeof document !== 'undefined') ? document.body : null;
+            target = this.dockElement || this._modalContainer || fallback;
+        }
+        if (target && target !== document.body && target.querySelector && typeof target.querySelector === 'function') {
+            const b3Dialog = target.matches && target.matches('.b3-dialog') ? target : target.querySelector(':scope > .b3-dialog');
+            if (b3Dialog) target = b3Dialog;
+        }
+        return target;
+    }
+
     _openScopedConfirm(host, options) {
         const opts = options || {};
-        const target = (host && host.appendChild) ? host : (this.dockElement || this._modalContainer || document.body);
+        const target = this._resolveScopedConfirmHost(host);
         const active = this._scopedConfirmByHost.get(target);
         if (active && active.mask) return active.mask;
         const isFallback = target === document.body;
@@ -9776,7 +9799,7 @@ openWishlistAbandonSheet(id) {
     }
 
     _closeScopedConfirm(host) {
-        const active = host && this._scopedConfirmByHost.get(host);
+        const active = host && this._scopedConfirmByHost.get(this._resolveScopedConfirmHost(host));
         if (active && typeof active.close === 'function') active.close();
     }
 
@@ -18514,6 +18537,7 @@ closeProductCard() {
                     const entry = kind === 'brands' ? this.getBrandById(entryId) : this.getChannelById(entryId);
                     if (!entry) return;
                     const isBrand = kind === 'brands';
+                    const refs = this._getDimensionReferenceCount(kind, entryId);
                     this._openScopedConfirm(root, {
                         title: this._t(isBrand ? 'settingsDeleteBrandConfirmTitle' : 'settingsDeleteChannelConfirmTitle',
                             isBrand ? '删除品牌' : '删除渠道'),
