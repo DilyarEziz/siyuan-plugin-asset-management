@@ -724,6 +724,8 @@
   "settingsDeleteChannelConfirmTitle": "删除渠道",
   "settingsDeleteBrandConfirmText": "确定删除品牌「{label}」吗？此操作不可撤销。",
   "settingsDeleteChannelConfirmText": "确定删除渠道「{label}」吗？此操作不可撤销。",
+  "settingsDeleteTagConfirmTitle": "删除标签",
+  "settingsDeleteTagConfirmText": "确定删除标签「{label}」吗？此操作不可撤销。",
   "settingsDeleteBrandReferencedHint": "该品牌正被 {n} 项资产引用，删除后这些资产的品牌将设为未设置。",
   "settingsDeleteChannelReferencedHint": "该渠道正被 {n} 项资产引用，删除后这些资产的渠道将设为未设置。",
   "brandColorSwatchLabel": "设置品牌颜色",

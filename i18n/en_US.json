@@ -724,6 +724,8 @@
   "settingsDeleteChannelConfirmTitle": "Delete Channel",
   "settingsDeleteBrandConfirmText": "Delete brand \"{label}\"? This cannot be undone.",
   "settingsDeleteChannelConfirmText": "Delete channel \"{label}\"? This cannot be undone.",
+  "settingsDeleteTagConfirmTitle": "Delete Tag",
+  "settingsDeleteTagConfirmText": "Delete tag \"{label}\"? This cannot be undone.",
   "settingsDeleteBrandReferencedHint": "{n} asset(s) reference this brand; deleting it will clear the brand from those assets.",
   "settingsDeleteChannelReferencedHint": "{n} asset(s) reference this channel; deleting it will clear the channel from those assets.",
   "brandColorSwatchLabel": "Set brand color",

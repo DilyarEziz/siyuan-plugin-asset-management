@@ -22,7 +22,12 @@ const ID = 'a1000000-0000-4000-8000-000000000001';
     assert.deepEqual(h.plugin._tags, before, 'failed delete cannot change memory');
     tagsTab.onclick();
     const deleteWork = h.document.querySelector(`[data-settings-tag-delete="${work.id}"]`);
-    await deleteWork.onclick(); assert.equal(h.plugin._tags.length, 2);
+    await deleteWork.onclick();
+    // v2.6.6：标签删除与品牌 / 渠道同款二次确认——点删除先弹确认，点确认才真删。
+    const tagConfirmOk = h.document.querySelector('.b3-dialog > .am-plugin-confirm-mask [data-scoped-confirm-ok]');
+    assert.ok(tagConfirmOk, 'tag delete now opens scoped confirm instead of deleting directly');
+    await tagConfirmOk.onclick();
+    assert.equal(h.plugin._tags.length, 2);
     const html = h.plugin.renderSettingsTags(); assert.match(html, /settings-create-tag/); assert.match(html, /1 项资产引用/);
     assert.ok(h.document.querySelector('[data-action="settings-create-tag"]'), 'real settings dialog renders tag CRUD DOM');
     h.io.failFile = 'tags.json'; const stable = structuredClone(h.plugin._tags);

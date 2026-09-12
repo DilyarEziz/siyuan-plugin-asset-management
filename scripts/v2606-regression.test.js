@@ -103,7 +103,8 @@ function injectExpiredSubscription(plugin, fixture) {
         const result = await plugin.deleteChannel(channel.id);
         assert.deepEqual(result, { deleted: true, clearedRefs: 0 }, 'unreferenced channel deletes cleanly');
         assert.equal(plugin._getDimensionDirectory('channels').length, 0);
-        // UI：品牌 / 渠道删除按钮不因引用禁用；标签被引用仍禁用
+        // UI：品牌 / 渠道删除按钮不因引用禁用（标签保持原禁用逻辑）；
+        // 标签 / 品牌 / 渠道删除均走二次确认（v2.6.6 标签确认对齐）。
         const tag = await plugin.createTag({ label: 'Keep' });
         await plugin.updateAsset(P_ID, { tagIds: [tag.id] });
         const brandsHtml = plugin.renderSettingsTags();
@@ -139,6 +140,19 @@ function injectExpiredSubscription(plugin, fixture) {
         // Esc/关闭路径：_closeScopedConfirm(root) 用原 host 也能清理（WeakMap key 一致）
         maskInDialog.querySelector('[data-scoped-confirm-cancel]').onclick();
         assert.equal(settingsDialog.element.querySelector(':scope > .b3-dialog > .am-plugin-confirm-mask'), null, 'close resolves the same host key');
+
+        // 标签删除同样走二次确认（无引用时可确认后删除）
+        const tagToDel = await h.plugin.createTag({ label: 'TagDel' });
+        h.plugin._settingsCatalogTab = 'tags';
+        h.document.querySelector('[data-settings-tab="tags"]').onclick();
+        const tagDelBtn = h.document.querySelector(`[data-settings-tag-delete="${tagToDel.id}"]`);
+        assert.ok(tagDelBtn && tagDelBtn.disabled === false, 'unreferenced tag delete button enabled');
+        tagDelBtn.onclick();
+        const tagMask = settingsDialog.element.querySelector(':scope > .b3-dialog > .am-plugin-confirm-mask');
+        assert.ok(tagMask && tagMask.textContent.includes('TagDel'), 'tag delete opens confirm with tag label');
+        await tagMask.querySelector('[data-scoped-confirm-ok]').onclick();
+        assert.equal(h.plugin._tags.some(item => item.id === tagToDel.id), false, 'tag deleted after confirm');
+        assert.equal(settingsDialog.element.querySelector(':scope > .b3-dialog > .am-plugin-confirm-mask'), null, 'confirm mask removed after delete');
     }
 
     // ---------- 3. 种草历程门卫 ----------

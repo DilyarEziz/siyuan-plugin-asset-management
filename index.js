@@ -27,6 +27,8 @@
  *       element 是文档流内外层 wrapper（高度 0、位于视口底部之外），全屏层是内部
  *       .b3-dialog（fixed）；_openScopedConfirm 检测到该结构时提升挂载到 .b3-dialog，
  *       确认遮罩与卡片始终全屏居中；开/关共用解析保证清理路径一致
+ *   - 追加（v2.6.6 实测反馈）：标签删除与品牌 / 渠道对齐——点击删除先弹二次确认，
+ *       确认后才真删；被引用标签仍保持按钮禁用不变
  *
  * v2.6.4（首页筛选记忆 + 订阅月度支出口径修复 + 思源 3.8.3 内核适配 + AI 写操作事件驱动唤醒）：
  *   - 首页筛选记忆：手动改动状态 / 类型 / 排序 / 标签筛选后把快照写入
@@ -18488,13 +18490,23 @@ closeProductCard() {
                     this.showToast('⚠️ ' + String(error && error.message || error));
                 }
             };
+            // v2.6.6：标签删除与品牌 / 渠道同款二次确认（确认弹窗挂载点自动提升到 .b3-dialog 全屏层）。
+            // 标签被引用时按钮仍禁用（引用保护保留），确认文案无需引用提示。
             root.querySelectorAll('[data-settings-tag-delete]').forEach(button => {
-                button.onclick = async () => {
-                    try {
-                        if (await this.deleteTag(button.dataset.settingsTagDelete)) restoreTab();
-                    } catch (error) {
-                        this.showToast('⚠️ ' + String(error && error.message || error));
-                    }
+                button.onclick = () => {
+                    const tag = this.getTagById(button.dataset.settingsTagDelete);
+                    if (!tag) return;
+                    this._openScopedConfirm(root, {
+                        title: this._t('settingsDeleteTagConfirmTitle', '删除标签'),
+                        text: this._t('settingsDeleteTagConfirmText', '确定删除标签「{label}」吗？此操作不可撤销。', { label: tag.label }),
+                        onConfirm: async () => {
+                            try {
+                                if (await this.deleteTag(button.dataset.settingsTagDelete)) restoreTab();
+                            } catch (error) {
+                                this.showToast('⚠️ ' + String(error && error.message || error));
+                            }
+                        },
+                    });
                 };
             });
             // v2.3.0 阶段 2b：swatch → 取色器 → updateTag({color}) → restoreTab 刷新本区
