@@ -10,10 +10,10 @@
  *   - 品牌 / 渠道删除放开：被资产引用时不再拒绝删除，同一事务内自动把引用该项的
  *       资产外键置空（同步刷新更新时间），并逐资产记 update 审计日志；删除确认弹窗
  *       在有引用时提示受影响数量，设置页提示文案同步改写（标签仍保持原禁用逻辑）
- *   - 设置弹窗尺寸按视口比例动态计算（实测反馈两轮）：宽 ≈ 视口 62%
- *       （夹在 [720, min(1080, 86%)]，比旧固定 720px 拉长），高 ≈ 视口 72%
- *       （夹在 [480, 88%]，比旧 dock 基准缩短），宽高比接近 4:3；移动端宽 100vw、
- *       高 ≈ 视口 92%。切换 Tab 不再随内容跳动，超出内容由内容区上下滚动
+ *   - 设置弹窗尺寸按视口比例动态计算（实测反馈多轮）：宽 ≈ 视口 56%
+ *       （夹在 [720, min(1080, 86%)]），高 ≈ 视口 72%（夹在 [480, 88%]）；
+ *       移动端宽 100vw、高 ≈ 视口 92%。切换 Tab 不再随内容跳动，
+ *       超出内容由内容区上下滚动
  *   - 种草历程门卫：仅对正在种草中或存在种草转购买事件的商品渲染「种草历程」；
  *       直接新建的商品不再把创建时间当成种草时间误显历程区
  *   - 首页退役分组：列表与矩阵视图统一把退役产品排到最后，与非退役之间插入
@@ -30,6 +30,10 @@
  *       确认遮罩与卡片始终全屏居中；开/关共用解析保证清理路径一致
  *   - 追加（v2.6.6 实测反馈）：标签删除与品牌 / 渠道对齐——点击删除先弹二次确认，
  *       确认后才真删；被引用标签仍保持按钮禁用不变
+ *   - 追加（v2.6.6 实测反馈）：AI 工具补全品牌 / 渠道——asset_create / asset_update
+ *       支持 brandId / channelId（目录内 UUID 或 null 清空，schema 描述同步）；
+ *       新增 asset_dimension_create 工具按名称新建品牌 / 渠道目录条目并返回新 id，
+ *       前端写桥白名单接入 createBrand / createChannel（需创建权限）
  *
  * v2.6.4（首页筛选记忆 + 订阅月度支出口径修复 + 思源 3.8.3 内核适配 + AI 写操作事件驱动唤醒）：
  *   - 首页筛选记忆：手动改动状态 / 类型 / 排序 / 标签筛选后把快照写入
@@ -598,6 +602,8 @@ const AGENT_WRITE_METHOD_NAMES = Object.freeze([
     'recordPrepaidCountAdjustment', 'recordPrepaidConsumption', 'correctPurchaseAmount',
     'correctSubscriptionPaymentAmount', 'updateSubscriptionStartDate', 'updateSubscriptionPeriodEnd',
     'updateAssetTags', 'createAndBindAssetTags',
+    // v2.6.6：品牌 / 渠道目录新建（asset_dimension_create 写桥）。
+    'createBrand', 'createChannel',
 ]);
 // 队列 dispatch 前的权限二次校验（内核侧 agent-actions 已按工具校验过一次；
 // 这里按 method 粒度再拦一道，settings 可能在内核读快照之后被用户改掉）。
@@ -621,6 +627,9 @@ const AGENT_WRITE_METHOD_PERMISSIONS = Object.freeze({
     updateSubscriptionPeriodEnd: ['aiAllowLifecycle'],
     updateAssetTags: ['aiAllowModify'],
     createAndBindAssetTags: ['aiAllowCreate', 'aiAllowModify'],
+    // v2.6.6：品牌 / 渠道目录新建（asset_dimension_create 写桥）。
+    createBrand: ['aiAllowCreate'],
+    createChannel: ['aiAllowCreate'],
 });
 const AGENT_WRITE_ROOT = 'agent-writes/';
 const AGENT_WRITE_PENDING_DIR = AGENT_WRITE_ROOT + 'pending/';
@@ -10201,9 +10210,9 @@ closeProductCard() {
 
     openSettingsDialog() {
         const tab = "general";
-        // v2.6.6：设置弹窗宽高按视口比例动态定尺寸（实测反馈：统一高度后比例不美观）——
-        //   - 桌面：宽 ≈ 视口 62%（夹在 [720, min(1080, 86%)]，比旧固定 720px 明显拉长）；
-        //     高 ≈ 视口 72%（夹在 [480, 88%]，比旧 dock 基准明显缩短），宽高比接近 4:3。
+        // v2.6.6：设置弹窗宽高按视口比例动态定尺寸（实测反馈三轮：统一高度 → 比例 → 宽度微调）——
+        //   - 桌面：宽 ≈ 视口 56%（夹在 [720, min(1080, 86%)]，比旧固定 720px 略拉长）；
+        //     高 ≈ 视口 72%（夹在 [480, 88%]，比旧 dock 基准缩短）。
         //   - 移动端：宽仍 100vw，高 ≈ 视口 92%（近全屏）。
         // 切换 Tab 不再随内容高度跳动；内容超出时由 .am-settings__content 上下滚动。
         const settingsDialogSize = this._settingsDialogSize();
@@ -10254,7 +10263,7 @@ closeProductCard() {
             const mobileHeight = viewportH > 0 ? Math.round(viewportH * 0.92) : 560;
             return { width: null, height: Math.max(480, mobileHeight) };
         }
-        let width = viewportW > 0 ? Math.round(viewportW * 0.62) : 720;
+        let width = viewportW > 0 ? Math.round(viewportW * 0.56) : 720;
         if (viewportW > 0) width = Math.min(width, Math.round(viewportW * 0.86), 1080);
         width = Math.max(width, 720);
         let height = viewportH > 0 ? Math.round(viewportH * 0.72) : 560;

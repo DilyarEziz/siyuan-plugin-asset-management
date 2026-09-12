@@ -16,7 +16,7 @@
  *     siyuan.mcp.registerTool / unregisterTool 仅思源 3.8.1 提供，3.8.2 起内核已移除
  *     （3.8.3 源码 kernel 包零命中）；siyuan.agent.registerCapability 在 3.8.3 保留且
  *     config 字段兼容，因此 3.8.2+ 实际走 registerCapability 分支，3.8.0 同样可用。
- *     （asset_query / asset_create / asset_update / asset_lifecycle / asset_record / asset_price_update / asset_delete / asset_tag_update / asset_tag_create），
+ *     （asset_query / asset_create / asset_update / asset_lifecycle / asset_record / asset_price_update / asset_delete / asset_tag_update / asset_tag_create / asset_dimension_create），
  *     最终暴露名 plugin__siyuan-plugin-asset-management__<name>（前缀内核自动加），内置 Agent 与 MCP 均可调用
  *   - 查询类工具实时读 storage 投影（复用 api/agent-actions.js 的脱敏投影）
  *   - v2.6.5 阶段4：asset_query op=tags 同时返回品牌 / 途径目录（dimensions.json）
@@ -610,6 +610,7 @@
         asset_delete: 'delete',
         asset_tag_update: 'update',
         asset_tag_create: 'create',
+        asset_dimension_create: 'create',
     });
 
     function expectedToolAction(name, args) {
@@ -707,7 +708,7 @@
                     type: 'object',
                     properties: {
                         action: actionSchema('create'),
-                        data: { type: 'object', description: 'formal-v2 asset object; price fields are forbidden here. Owned assets accept name, kind, status, currency, categoryId (kind-matched fixed id), tagIds (existing tag UUIDs, max 3), notes, details (by kind: physical warrantyEndsOn/costGoal; virtualSubscription planName/accountLabel/billingPlan.cycle/autoRenew; virtualPerpetual licenseAccountLabel; prepaid provider/expiresOn), acquiredOn (YYYY-MM-DD start date anchoring the first subscription period; defaults to today). Wishlist items use status=wishlist with wishlist{expectedAmountMinor, reason, targetGroup, heartbeatTarget} only' },
+                        data: { type: 'object', description: 'formal-v2 asset object; price fields are forbidden here. Owned assets accept name, kind, status, currency, categoryId (kind-matched fixed id), tagIds (existing tag UUIDs, max 3), brandId / channelId (existing brand or channel UUID from asset_query op=tags, or null to leave unset), notes, details (by kind: physical warrantyEndsOn/costGoal; virtualSubscription planName/accountLabel/billingPlan.cycle/autoRenew; virtualPerpetual licenseAccountLabel; prepaid provider/expiresOn), acquiredOn (YYYY-MM-DD start date anchoring the first subscription period; defaults to today). Wishlist items use status=wishlist with wishlist{expectedAmountMinor, reason, targetGroup, heartbeatTarget} only' },
                         purchaseAmountMinor: integerSchema('Optional purchase price in minor units; CNY 99.00 is 9900'),
                         prepaidInitialAmountMinor: integerSchema('Optional prepaid-amount opening balance in minor units'),
                         prepaidOpeningCount: integerSchema('Optional prepaid-count opening count'),
@@ -723,7 +724,7 @@
                     properties: {
                         action: actionSchema('update'),
                         assetId: stringSchema('Exact lowercase asset UUID'),
-                        patch: { type: 'object', description: 'Limited patch: name, acquiredOn for owned non-subscriptions, categoryId or exact category label, tagIds of existing tags, notes, restricted kind details (physical warrantyEndsOn/costGoal; virtualSubscription planName/billingPlan.cycle; prepaid provider/expiresOn; virtualPerpetual none); use tag tools for labels' },
+                        patch: { type: 'object', description: 'Limited patch: name, acquiredOn for owned non-subscriptions, categoryId or exact category label, tagIds of existing tags, brandId / channelId (existing brand or channel UUID from asset_query op=tags, or null to clear), notes, restricted kind details (physical warrantyEndsOn/costGoal; virtualSubscription planName/billingPlan.cycle; prepaid provider/expiresOn; virtualPerpetual none); use tag tools for labels' },
                     },
                     required: ['action', 'assetId', 'patch'],
                 },
@@ -826,6 +827,19 @@
                         mode: stringEnumSchema(['add', 'replace'], 'Tag binding mode; replace only runs when explicitly supplied'),
                     },
                     required: ['action', 'assetId', 'labels'],
+                },
+            },
+            // v2.6.6：品牌 / 渠道目录按名称新建（返回新条目 id 供 asset_create / asset_update 引用）。
+            asset_dimension_create: {
+                effects: { localWrite: true },
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        action: actionSchema('create'),
+                        kind: stringEnumSchema(['brands', 'channels'], 'Which directory to create the entry in'),
+                        label: stringSchema('Entry display name, 1-20 characters after trim; case-insensitive uniqueness is enforced'),
+                    },
+                    required: ['action', 'kind', 'label'],
                 },
             },
         };

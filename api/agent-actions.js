@@ -199,6 +199,7 @@ const AGENT_ACTION_NAMES = Object.freeze([
     'asset_delete',
     'asset_tag_update',
     'asset_tag_create',
+    'asset_dimension_create',
 ]);
 const QUERY_OPERATIONS = Object.freeze(['count', 'search', 'detail', 'summary', 'tags']);
 const LIFECYCLE_OPERATIONS = Object.freeze([
@@ -1056,6 +1057,17 @@ function validateUpdateArgs(raw, domain) {
     return { id: id, patch: patch };
 }
 
+// v2.6.6：品牌 / 渠道目录新建入参校验——kind 二选一，label trim 后 1-20 字符。
+// 目录条目大小写不敏感唯一；重名时插件域方法抛错，这里透传为 INVALID_ARGS。
+function validateDimensionCreateArgs(raw) {
+    assertKnownKeys(raw, ['kind', 'label'], 'args');
+    const kind = enumValue(raw.kind, ['brands', 'channels'], 'kind');
+    if (typeof raw.label !== 'string') throw actionError('INVALID_ARGS', 'label must be a string');
+    const label = raw.label.trim();
+    if (!label || label.length > 20) throw actionError('INVALID_ARGS', 'label must be 1-20 characters after trim');
+    return { kind: kind, label: label };
+}
+
 function normalizeTagLabels(value) {
     if (!Array.isArray(value)) throw actionError('INVALID_ARGS', 'labels must be an array');
     const seen = new Set();
@@ -1298,6 +1310,15 @@ function createAgentActionHandlers(options) {
             assets: domain.assets.map(item => item.id === asset.id ? asset : item), tags: nextTags,
         }), { locale: args.locale }));
     });
+    // v2.6.6：品牌 / 渠道目录新建——AI 无需 UUID 即可按名称新建条目，返回新 id 供
+    // asset_create / asset_update 直接引用。同名单纯复用（大小写不敏感）由域方法抛错。
+    const dimensionCreate = wrap('asset_dimension_create', ['aiAllowCreate'], async raw => {
+        const args = validateDimensionCreateArgs(raw);
+        const method = args.kind === 'brands' ? 'createBrand' : 'createChannel';
+        const entry = await call(method, [{ label: args.label }]);
+        if (!entry || !entry.id) throw actionError('INVALID_ARGS', 'directory entry could not be created');
+        return writeResult('asset_dimension_create', { kind: args.kind, id: String(entry.id), label: String(entry.label || args.label) });
+    });
     const record = wrap('asset_record', 'aiAllowRecords', async raw => {
         const domain = await requireDomain(getDomain);
         const args = validateRecordArgs(raw, domain);
@@ -1352,6 +1373,7 @@ function createAgentActionHandlers(options) {
         asset_delete: remove,
         asset_tag_update: tagUpdate,
         asset_tag_create: tagCreate,
+        asset_dimension_create: dimensionCreate,
     };
 }
 
@@ -1365,6 +1387,7 @@ const AGENT_ACTION_DESCRIPTIONS = Object.freeze({
     asset_delete: 'Call with JSON args {"action":"delete","assetId":"<exact lowercase UUID>"}. This permanently deletes the asset and its formal sidecar records through the plugin transaction. Query first, require an explicit assetId, and never infer an ID from a name.',
     asset_tag_update: 'Call with JSON args {"action":"update","assetId":"<exact lowercase UUID>","labels":["Exact tag label"],"mode":"add|remove|replace"}. Labels are trimmed and matched case-insensitively by exact label only; fuzzy guesses are rejected. mode defaults to add, and replace runs only when explicitly supplied. Existing tags only; requires modify permission. An asset may have at most 32 tags.',
     asset_tag_create: 'Call with JSON args {"action":"create","assetId":"<exact lowercase UUID>","labels":["Tag label"],"mode":"add|replace"}. Missing labels are created and bound in one formal transaction; concurrent requests reuse an existing exact-match tag instead of creating an orphan. Requires both create and modify permissions plus Agent write confirmation. Labels are trimmed, case-insensitive exact matches, and an asset may have at most 32 tags.',
+    asset_dimension_create: 'Call with JSON args {"action":"create","kind":"brands|channels","label":"Entry name"} to create a brand or purchase-channel catalog entry by name, then use the returned id in asset_create.data or asset_update.patch (brandId / channelId). Labels are trimmed to 1-20 characters and matched case-insensitively: creating a duplicate returns an error instead of a second entry. Requires the create permission plus Agent write confirmation.',
 });
 
 module.exports = {

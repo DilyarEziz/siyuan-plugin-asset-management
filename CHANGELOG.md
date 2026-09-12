@@ -12,6 +12,7 @@
 - 改进：设置窗口高度固定不变——以插件主界面高度为基准，切换各个设置页时窗口不再忽高忽低；内容较多时在窗口内上下滚动查看。
 - 修复：直接新建的产品不再显示「种草历程」——只有真正经历过种草的产品（正在种草中，或从种草池购买而来）才展示种草时间和心动记录。
 - 改进：删除标签现在也需要二次确认——与品牌、渠道一致，点「删除」后确认才会真正删除，防止误删。
+- 新增：AI 助手支持品牌与购买渠道——可以按名称新建品牌、渠道条目，并在创建或修改资产时直接设置品牌与渠道。
 - 新增：首页产品列表中，所有退役产品统一排到最后，与前面的产品之间以一条「已退役」分隔线区分，列表一目了然；卡片视图同样生效。
 - 改进：订阅到期后自动归入退役——不再停留在「在役」；首页筛选「在役」不再包含过期订阅，「已退役」则包含它们，首页与报表的在役 / 退役数字同步更新，在役金额与日均成本也不再计入已过期订阅。过期订阅卡片会显示灰色「已过期」标记，开通了自动续费的订阅仍按原样显示「待续订」。
 - 构建：版本号升至 `2.6.6`，同步更新双语 README、构建产物和发布包。
@@ -317,6 +318,7 @@
 - Improved: the settings window now keeps a fixed height — based on the plugin's main panel, it no longer grows and shrinks as you switch between settings pages; longer pages scroll inside the window.
 - Fixed: directly created products no longer show a "wishlist journey" — only products that truly went through the wishlist (still wished, or purchased from the wishlist pool) show their wish date and heartbeat records.
 - Improved: deleting a tag now asks for confirmation first — consistent with brands and purchase channels, so a stray click no longer removes a tag.
+- New: the AI assistant now understands brands and purchase channels — it can create brand / channel entries by name and set them on assets when creating or editing them.
 - New: on the home page, all retired products are grouped at the bottom of the list, separated from the rest by a "Retired" divider line for a clear overview; the card view behaves the same.
 - Improved: expired subscriptions now count as retired — they no longer sit in the "Active" list; the "Active" filter excludes them while "Retired" includes them, and the active / retired numbers on the home page and in reports stay in sync. Expired subscriptions no longer count toward the active net total or daily average. Expired subscription cards show a grey "Expired" badge, while subscriptions with auto-renew on keep their "Pending renewal" badge as before.
 - Build: version bumped to `2.6.6`, with both READMEs, build output, and the release package updated accordingly.

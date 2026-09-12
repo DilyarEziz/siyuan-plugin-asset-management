@@ -117,11 +117,11 @@ function injectExpiredSubscription(plugin, fixture) {
     // ---------- 2. 设置弹窗尺寸动态计算 + 确认弹窗挂载点提升 ----------
     {
         const h = createHarness([asset(P_ID, 'physical', 'Camera')]);
-        // 模拟 MacBook 14 外接常规视口：1512×982 → 宽 62% ≈ 937、高 72% ≈ 707（4:3 左右）
+        // 模拟 MacBook 14 外接常规视口：1512×982 → 宽 56% ≈ 847、高 72% ≈ 707
         Object.defineProperty(global.window, 'innerWidth', { value: 1512, configurable: true });
         Object.defineProperty(global.window, 'innerHeight', { value: 982, configurable: true });
         const size = h.plugin._settingsDialogSize();
-        assert.deepEqual(size, { width: 937, height: 707 }, 'desktop size follows viewport ratio');
+        assert.deepEqual(size, { width: 847, height: 707 }, 'desktop size follows viewport ratio');
         // 小窗口保底 720×480；超宽屏宽封顶 1080
         Object.defineProperty(global.window, 'innerWidth', { value: 800, configurable: true });
         Object.defineProperty(global.window, 'innerHeight', { value: 500, configurable: true });

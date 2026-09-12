@@ -13,6 +13,8 @@ const SUBSCRIPTION_ID = '22222222-2222-4222-8222-222222222222';
 const PREPAID_ID = '33333333-3333-4333-8333-333333333333';
 const TAG_WORK_ID = '66666666-6666-4666-8666-666666666666';
 const TAG_HOME_ID = '77777777-7777-4777-8777-777777777777';
+const BRAND_ID = 'b1000000-0000-4000-8000-000000000001';
+const CHANNEL_ID = 'c1000000-0000-4000-8000-000000000001';
 
 function completeDomain(assets, tags, dimensions) {
     const domain = {
@@ -119,7 +121,7 @@ function testSettingsMigrationAndHelpers() {
     assert.deepEqual(agentActions.normalizeAgentSettings({}), agentActions.AGENT_DEFAULT_SETTINGS);
     assert.deepEqual(agentActions.AGENT_ACTION_NAMES, [
         'asset_query', 'asset_create', 'asset_update', 'asset_lifecycle', 'asset_price_update', 'asset_record', 'asset_delete',
-        'asset_tag_update', 'asset_tag_create',
+        'asset_tag_update', 'asset_tag_create', 'asset_dimension_create',
     ]);
     agentActions.AGENT_ACTION_NAMES.forEach(name => {
         assert.equal(typeof agentActions.AGENT_ACTION_DESCRIPTIONS[name], 'string');
@@ -671,6 +673,49 @@ async function testAgentTagSemantics() {
         'rejected bind must not leave created tags behind');
 }
 
+async function testDimensionCreate() {
+    // v2.6.6：asset_dimension_create——AI 按名称新建品牌 / 渠道目录条目，返回新 id。
+    const domain = completeDomain(makeAssets());
+    const calls = [];
+    const handlers = agentActions.createAgentActionHandlers({
+        getSettings: () => allPermissions(),
+        getDomain: () => domain,
+        methods: {
+            async createBrand(input) { calls.push(['createBrand', input]); return { id: BRAND_ID, label: input.label, createdAt: '2026-09-11T00:00:00.000Z' }; },
+            async createChannel(input) { calls.push(['createChannel', input]); return { id: CHANNEL_ID, label: input.label, createdAt: '2026-09-11T00:00:00.000Z' }; },
+        },
+    });
+    const brand = await invoke(handlers.asset_dimension_create, { action: 'create', kind: 'brands', label: ' Apple ' });
+    assert.equal(brand.body.ok, true);
+    assert.deepEqual(brand.body.data, { kind: 'brands', id: BRAND_ID, label: 'Apple' }, 'trim + brands routing');
+    const channel = await invoke(handlers.asset_dimension_create, { action: 'create', kind: 'channels', label: '自营' });
+    assert.equal(channel.body.ok, true);
+    assert.deepEqual(channel.body.data, { kind: 'channels', id: CHANNEL_ID, label: '自营' }, 'channels routing');
+    assert.deepEqual(calls, [['createBrand', { label: 'Apple' }], ['createChannel', { label: '自营' }]]);
+
+    const invalidKind = await invoke(handlers.asset_dimension_create, { action: 'create', kind: 'tags', label: 'X' });
+    assert.equal(invalidKind.body.error.code, 'INVALID_ENUM');
+    const blankLabel = await invoke(handlers.asset_dimension_create, { action: 'create', kind: 'brands', label: '   ' });
+    assert.equal(blankLabel.body.error.code, 'INVALID_ARGS');
+    const longLabel = await invoke(handlers.asset_dimension_create, { action: 'create', kind: 'brands', label: 'x'.repeat(21) });
+    assert.equal(longLabel.body.error.code, 'INVALID_ARGS');
+    const unknownArg = await invoke(handlers.asset_dimension_create, { action: 'create', kind: 'brands', label: 'Apple', color: '#fff' });
+    assert.equal(unknownArg.body.error.code, 'UNKNOWN_FIELD');
+
+    const denied = agentActions.createAgentActionHandlers({
+        getSettings: () => allPermissions({ aiAllowCreate: false }), getDomain: () => domain,
+        methods: { createBrand: async () => { throw new Error('must not run'); } },
+    });
+    assert.equal((await invoke(denied.asset_dimension_create, { action: 'create', kind: 'brands', label: 'X' })).body.error.code, 'PERMISSION_DENIED');
+
+    // 端到端：真实插件方法走 formal 事务，创建后的条目立即可被 asset_create 引用。
+    const h = createHarness([asset(PHYSICAL_ID, 'physical', 'Atomic desk')]);
+    const entry = await h.plugin.createBrand({ label: 'DemoBrand' });
+    assert.ok(h.plugin._getDimensionDirectory('brands').some(item => item.id === entry.id));
+    const updated = await h.plugin.updateAsset(PHYSICAL_ID, { brandId: entry.id });
+    assert.equal((updated.asset || updated).brandId, entry.id);
+}
+
 async function testFrontendWriteQueueGate() {
     // v2.6.0：Agent 工具改由 kernel.js 注册；前端只轮询写队列并做权限二次校验。
     const harness = createHarness(makeAssets());
@@ -815,6 +860,7 @@ function testStaticCleanupAndI18n() {
     await testDedicatedPriceUpdate();
     await testAgentFieldRoutingAndLocalization();
     await testAgentTagSemantics();
+    await testDimensionCreate();
     await testFrontendWriteCoordinatorUnavailable();
     await testFrontendWriteQueueGate();
     testStaticCleanupAndI18n();

@@ -29,7 +29,7 @@ const ASSET_IDS = {
     subscription: '22222222-2222-4222-8222-222222222222',
     prepaid: '33333333-3333-4333-8333-333333333333',
 };
-const TOOL_NAMES = ['asset_query', 'asset_create', 'asset_update', 'asset_lifecycle', 'asset_price_update', 'asset_record', 'asset_delete', 'asset_tag_update', 'asset_tag_create'];
+const TOOL_NAMES = ['asset_query', 'asset_create', 'asset_update', 'asset_lifecycle', 'asset_price_update', 'asset_record', 'asset_delete', 'asset_tag_update', 'asset_tag_create', 'asset_dimension_create'];
 
 function putJson(map, file, value) {
     map.set(file, JSON.stringify(value, null, 2));
@@ -198,7 +198,7 @@ function installWebLockMock(locks) {
 async function testRegistration(mock) {
     assert.equal(fs.existsSync(KERNEL_FILE), true, 'kernel.js is built before running this test');
     await global.siyuan.plugin.lifecycle.onload();
-    assert.equal(mock.registry.size, 9);
+    assert.equal(mock.registry.size, 10);
     TOOL_NAMES.forEach(name => assert.ok(mock.registry.has(name), 'registered: ' + name));
 
     const query = mock.registry.get('asset_query');
@@ -252,7 +252,7 @@ async function testRegistration(mock) {
 
     // 单飞：重复 onload 不重复注册
     await global.siyuan.plugin.lifecycle.onload();
-    assert.equal(mock.registry.size, 9);
+    assert.equal(mock.registry.size, 10);
 }
 
 async function testQuery(mock) {
@@ -671,7 +671,7 @@ async function testUnload(mock) {
 
     // 卸载后可重新注册（registeredTools 已清空）
     await global.siyuan.plugin.lifecycle.onload();
-    assert.equal(mock.registry.size, 9);
+    assert.equal(mock.registry.size, 10);
 }
 
 async function testMcpRegistrationPriority() {
@@ -682,7 +682,7 @@ async function testMcpRegistrationPriority() {
     require(KERNEL_FILE);
     await global.siyuan.plugin.lifecycle.onload();
 
-    assert.equal(mock.registry.size, 9);
+    assert.equal(mock.registry.size, 10);
     mock.registry.forEach(tool => assert.equal(tool.api, 'registerTool', '3.8.1 MCP API has priority'));
     const status = JSON.parse(mock.storageMap.get('agent-kernel-status.json'));
     assert.equal(status.api, 'registerTool');
@@ -775,7 +775,7 @@ async function testRegistrationRollbackAndRetry() {
 
     options.failRegisterAt = 0;
     await global.siyuan.plugin.lifecycle.onload();
-    assert.equal(mock.registry.size, 9, 'onload can retry after rollback');
+    assert.equal(mock.registry.size, 10, 'onload can retry after rollback');
     const recovered = JSON.parse(mock.storageMap.get('agent-kernel-status.json'));
     assert.deepEqual(recovered.tools, TOOL_NAMES);
     await global.siyuan.plugin.lifecycle.onunload();
