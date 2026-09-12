@@ -114,15 +114,29 @@ function injectExpiredSubscription(plugin, fixture) {
         assert.match(tagsHtml, /data-settings-tag-delete[^>]* disabled|disabled[^>]*data-settings-tag-delete/, 'tag delete stays disabled when referenced');
     }
 
-    // ---------- 2. 设置弹窗高度固定 + 确认弹窗挂载点提升 ----------
+    // ---------- 2. 设置弹窗尺寸动态计算 + 确认弹窗挂载点提升 ----------
     {
         const h = createHarness([asset(P_ID, 'physical', 'Camera')]);
+        // 模拟 MacBook 14 外接常规视口：1512×982 → 宽 62% ≈ 937、高 72% ≈ 707（4:3 左右）
+        Object.defineProperty(global.window, 'innerWidth', { value: 1512, configurable: true });
+        Object.defineProperty(global.window, 'innerHeight', { value: 982, configurable: true });
+        const size = h.plugin._settingsDialogSize();
+        assert.deepEqual(size, { width: 937, height: 707 }, 'desktop size follows viewport ratio');
+        // 小窗口保底 720×480；超宽屏宽封顶 1080
+        Object.defineProperty(global.window, 'innerWidth', { value: 800, configurable: true });
+        Object.defineProperty(global.window, 'innerHeight', { value: 500, configurable: true });
+        assert.deepEqual(h.plugin._settingsDialogSize(), { width: 720, height: 480 }, 'small viewport clamps to floor');
+        Object.defineProperty(global.window, 'innerWidth', { value: 3440, configurable: true });
+        Object.defineProperty(global.window, 'innerHeight', { value: 1440, configurable: true });
+        assert.equal(h.plugin._settingsDialogSize().width, 1080, 'ultra-wide width capped at 1080');
+        Object.defineProperty(global.window, 'innerWidth', { value: 1512, configurable: true });
+        Object.defineProperty(global.window, 'innerHeight', { value: 982, configurable: true });
         h.plugin.openSettingsDialog();
         await flushDialog();
         const settingsDialog = h.connectedDialogs()[0];
         const shell = settingsDialog.element.querySelector('.am-settings-dialog');
         assert.ok(shell, 'settings shell rendered');
-        assert.match(String(shell.getAttribute('style') || ''), /height:\s*\d+px/, 'settings dialog height is fixed inline');
+        assert.match(String(shell.getAttribute('style') || ''), /height:\s*707px/, 'settings dialog height matches viewport ratio');
 
         // v2.6.6 修复回归：设置弹窗内点删除 → 确认遮罩必须挂在 .b3-dialog（fixed 全屏层），
         // 不能直挂思源 Dialog 外层 wrapper（文档流普通 div，高度 0、位于视口底部之外）。

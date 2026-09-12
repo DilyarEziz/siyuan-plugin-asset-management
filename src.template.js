@@ -10,9 +10,10 @@
  *   - 品牌 / 渠道删除放开：被资产引用时不再拒绝删除，同一事务内自动把引用该项的
  *       资产外键置空（同步刷新更新时间），并逐资产记 update 审计日志；删除确认弹窗
  *       在有引用时提示受影响数量，设置页提示文案同步改写（标签仍保持原禁用逻辑）
- *   - 设置弹窗高度固定：打开时以插件首页（dock 面板）实测高度为基准夹取
- *       （≥480px，≤视口 88%，取不到回退 560px），切换 Tab 不再随内容跳动，
- *       超出内容由内容区上下滚动
+ *   - 设置弹窗尺寸按视口比例动态计算（实测反馈两轮）：宽 ≈ 视口 62%
+ *       （夹在 [720, min(1080, 86%)]，比旧固定 720px 拉长），高 ≈ 视口 72%
+ *       （夹在 [480, 88%]，比旧 dock 基准缩短），宽高比接近 4:3；移动端宽 100vw、
+ *       高 ≈ 视口 92%。切换 Tab 不再随内容跳动，超出内容由内容区上下滚动
  *   - 种草历程门卫：仅对正在种草中或存在种草转购买事件的商品渲染「种草历程」；
  *       直接新建的商品不再把创建时间当成种草时间误显历程区
  *   - 首页退役分组：列表与矩阵视图统一把退役产品排到最后，与非退役之间插入
@@ -10200,24 +10201,14 @@ closeProductCard() {
 
     openSettingsDialog() {
         const tab = "general";
-        // v2.6.6：设置弹窗高度固定——以插件首页（dock 面板）高度为基准，切换 Tab 不再
-        // 随内容高度跳动；内容超出时由 .am-settings__content 上下滚动。
-        //   - 基准：dock 元素实测高度；拿不到（dock 隐藏 / modal 模式）时回退 560px。
-        //   - 夹取：≥ 480px（视觉下限），≤ 视口高度 88%（不顶出屏幕）。
-        const settingsDialogHeight = (() => {
-            let base = 0;
-            try {
-                if (this.dockElement && typeof this.dockElement.getBoundingClientRect === 'function') {
-                    base = Math.round(this.dockElement.getBoundingClientRect().height || 0);
-                }
-            } catch (error) { base = 0; }
-            const viewport = (typeof window !== 'undefined' && window.innerHeight) || 0;
-            let height = base > 0 ? base : 560;
-            if (viewport > 0) height = Math.min(height, Math.round(viewport * 0.88));
-            return Math.max(height, 480);
-        })();
+        // v2.6.6：设置弹窗宽高按视口比例动态定尺寸（实测反馈：统一高度后比例不美观）——
+        //   - 桌面：宽 ≈ 视口 62%（夹在 [720, min(1080, 86%)]，比旧固定 720px 明显拉长）；
+        //     高 ≈ 视口 72%（夹在 [480, 88%]，比旧 dock 基准明显缩短），宽高比接近 4:3。
+        //   - 移动端：宽仍 100vw，高 ≈ 视口 92%（近全屏）。
+        // 切换 Tab 不再随内容高度跳动；内容超出时由 .am-settings__content 上下滚动。
+        const settingsDialogSize = this._settingsDialogSize();
         const renderShell = () => `
-            <div class="am-settings-dialog" style="height:${settingsDialogHeight}px">
+            <div class="am-settings-dialog" style="height:${settingsDialogSize.height}px">
                 <div class="am-settings__sidebar">
                     <button class="am-settings__tab am-settings__tab--active" data-tab="general">${escapeHtml(this._t("settingsTabGeneral", "常规"))}</button>
                     <button class="am-settings__tab" data-tab="data">${escapeHtml(this._t("settingsTabData", "数据"))}</button>
@@ -10252,7 +10243,24 @@ closeProductCard() {
                 this._closeScopedConfirm(root);
                 return originalDestroy();
             };
-        }, this.isMobile ? "100vw" : "720px");
+        }, this.isMobile ? "100vw" : settingsDialogSize.width + "px");
+    }
+
+    /** v2.6.6：设置弹窗尺寸（宽高随屏幕动态，见 openSettingsDialog 注释）。可单测。 */
+    _settingsDialogSize() {
+        const viewportW = (typeof window !== 'undefined' && window.innerWidth) || 0;
+        const viewportH = (typeof window !== 'undefined' && window.innerHeight) || 0;
+        if (this.isMobile) {
+            const mobileHeight = viewportH > 0 ? Math.round(viewportH * 0.92) : 560;
+            return { width: null, height: Math.max(480, mobileHeight) };
+        }
+        let width = viewportW > 0 ? Math.round(viewportW * 0.62) : 720;
+        if (viewportW > 0) width = Math.min(width, Math.round(viewportW * 0.86), 1080);
+        width = Math.max(width, 720);
+        let height = viewportH > 0 ? Math.round(viewportH * 0.72) : 560;
+        if (viewportH > 0) height = Math.min(height, Math.round(viewportH * 0.88));
+        height = Math.max(height, 480);
+        return { width: width, height: height };
     }
 
     bindSettingsTabEvents(root, tab) {
