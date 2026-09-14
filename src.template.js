@@ -9,7 +9,7 @@
  * v2.6.6（目录删除放开 + 设置弹窗定高 + 种草历程门卫 + 首页退役分组 + 过期即退役口径）：
  *   - 品牌 / 渠道删除放开：被资产引用时不再拒绝删除，同一事务内自动把引用该项的
  *       资产外键置空（同步刷新更新时间），并逐资产记 update 审计日志；删除确认弹窗
- *       在有引用时提示受影响数量，设置页提示文案同步改写（标签仍保持原禁用逻辑）
+ *       在有引用时提示受影响数量，设置页提示文案同步改写（标签级联见下方追加条目）
  *   - 设置弹窗尺寸按视口比例动态计算（实测反馈多轮）：宽 ≈ 视口 56%
  *       （夹在 [720, min(1080, 86%)]），高 ≈ 视口 72%（夹在 [480, 88%]）；
  *       移动端宽 100vw、高 ≈ 视口 92%。切换 Tab 不再随内容跳动，
@@ -28,8 +28,10 @@
  *       element 是文档流内外层 wrapper（高度 0、位于视口底部之外），全屏层是内部
  *       .b3-dialog（fixed）；_openScopedConfirm 检测到该结构时提升挂载到 .b3-dialog，
  *       确认遮罩与卡片始终全屏居中；开/关共用解析保证清理路径一致
- *   - 追加（v2.6.6 实测反馈）：标签删除与品牌 / 渠道对齐——点击删除先弹二次确认，
- *       确认后才真删；被引用标签仍保持按钮禁用不变
+ *   - 追加（v2.6.6 实测反馈）：标签删除与品牌 / 渠道完全对齐——点击删除先弹二次确认，
+ *       确认后才真删；被引用标签不再拒删（按钮不再禁用），同一事务内级联移除
+ *       所有引用资产 tagIds 中的该标签（每资产一条 update 审计日志），确认弹窗
+ *       提示受影响资产数
  *   - 追加（v2.6.6 实测反馈）：AI 工具补全品牌 / 渠道——asset_create / asset_update
  *       支持 brandId / channelId（目录内 UUID 或 null 清空，schema 描述同步）；
  *       新增 asset_dimension_create 工具按名称新建品牌 / 渠道目录条目并返回新 id，
@@ -428,9 +430,9 @@
  *     - _flushTags() — 5s 防抖落盘（与 _flushMaintenanceRecords 同模板）
  *     - createTag({label}) — 新建固定目录标签（名称 trim、大小写不敏感唯一）
  *     - updateTag(tagId, patch) — 历史兼容 no-op；不允许改名或编辑样式
- *     - deleteTag(tagId) — 仅删除未被任何资产引用的目录标签
+ *     - deleteTag(tagId) — 删除目录标签；v2.6.6 起被引用时级联移除资产上的该标签
  *     - getTagById(tagId) — 按 id 查找
- *     - openTagManagerDialog() — 仅创建、展示引用计数、删除无引用标签
+ *     - openTagManagerDialog() — 仅创建、展示引用计数、删除标签（引用级联移除）
  *   - 设置标签 Tab 为唯一管理入口；sheet 内按钮使用闭包直接绑定
  *
  * 功能（v0.14.0 + v0.15-T6 + v0.16-T1 / T3 / T5 / T6 / T7）：
@@ -1556,7 +1558,10 @@ openWishlistAbandonSheet(id) {
         const entry = { mask: mask, close: null, confirming: false };
         this._scopedConfirmByHost.set(target, entry);
         mask.className = `am-plugin-confirm-mask${isFallback ? ' am-plugin-confirm-mask--fallback' : ''}`;
-        mask.innerHTML = `<section class="am-plugin-confirm" role="dialog" aria-modal="true"><div class="am-confirm"><div class="am-confirm__icon">⚠️</div><div class="am-confirm__title">${escapeHtml(opts.title || this._t('dialogDeleteTitle', '确认删除'))}</div><div class="am-confirm__text">${escapeHtml(opts.text || '')}</div></div><div class="am-plugin-confirm__actions"><button type="button" class="b3-button b3-button--cancel am-scoped-confirm__button" data-scoped-confirm-cancel>${escapeHtml(opts.cancelLabel || this._t('btnCancel', '取消'))}</button><button type="button" class="b3-button b3-button--remove am-scoped-confirm__button am-scoped-confirm__button--danger" data-scoped-confirm-ok>${escapeHtml(opts.confirmLabel || this._t('btnConfirm', '确认'))}</button></div></section>`;
+        // v2.6.6 追加：opts.htmlHint 为受控 HTML 第二行（仅允许调用方拼接固定文案 + 数字占位，
+        // 不含用户输入），用于「当前被 N 个产品关联」加粗提示；opts.text 仍一律转义。
+        const confirmTextHtml = escapeHtml(opts.text || '') + (opts.htmlHint ? '<br/>' + String(opts.htmlHint) : '');
+        mask.innerHTML = `<section class="am-plugin-confirm" role="dialog" aria-modal="true"><div class="am-confirm"><div class="am-confirm__icon">⚠️</div><div class="am-confirm__title">${escapeHtml(opts.title || this._t('dialogDeleteTitle', '确认删除'))}</div><div class="am-confirm__text">${confirmTextHtml}</div></div><div class="am-plugin-confirm__actions"><button type="button" class="b3-button b3-button--cancel am-scoped-confirm__button" data-scoped-confirm-cancel>${escapeHtml(opts.cancelLabel || this._t('btnCancel', '取消'))}</button><button type="button" class="b3-button b3-button--remove am-scoped-confirm__button am-scoped-confirm__button--danger" data-scoped-confirm-ok>${escapeHtml(opts.confirmLabel || this._t('btnConfirm', '确认'))}</button></div></section>`;
         const close = () => {
             window.removeEventListener('keydown', onKeydown, KEYDOWN_CAPTURE_OPTS);
             if (mask.parentNode) mask.parentNode.removeChild(mask);
@@ -4901,9 +4906,9 @@ const bindDropdownEvents = () => {
         const countBars = kindCount.length ? `<div class="am-dashboard-bars">${kindCount.map(item => `<div class="am-bar-hit" data-action="dashboard-kind" data-kind="${escapeHtml(item.kind)}" title="${escapeHtml(this._t('dashboardBarTapHint', '点击查看明细'))}"><span>${escapeHtml(this._formalKindLabel(item.kind))}</span><strong>${item.value}</strong><i style="width:${(item.value / countMax * 100).toFixed(1)}%"></i></div>`).join('')}</div>` : this._renderFormalDashboardEmpty();
         const amountBars = kindAmount.length ? `<div class="am-dashboard-bars">${kindAmount.map(item => `<div class="am-bar-hit" data-action="dashboard-kind" data-kind="${escapeHtml(item.kind)}" title="${escapeHtml(this._t('dashboardBarTapHint', '点击查看明细'))}"><span>${escapeHtml(this._formalKindLabel(item.kind))}</span><strong>${formatAmountMinor(item.value, 'CNY')}</strong><i style="width:${(item.value / amountMax * 100).toFixed(1)}%"></i></div>`).join('')}</div>` : this._renderFormalDashboardEmpty();
         // 标签排行：只列有资产引用的标签，按聚合购入金额（折 CNY）从高到低；无任何带标签资产则不渲染。
-        // v2.6.5 阶段3c：受 settings.reportShowTagRank 控制（缺键按 true = 默认显示）。
-        const showTagRank = this.settings && this.settings.reportShowTagRank !== false;
-        const tagAmount = showTagRank ? this._reportTagAmountCny(report) : [];
+        // v2.6.6 追加：报表板块显示开关（reportShowTagRank / reportShowBrandRank / reportShowChannelRank）
+        // 移除——三个排行恒显示，设置页不再提供「报表显示」配置区。
+        const tagAmount = this._reportTagAmountCny(report);
         const tagMax = Math.max(1, ...tagAmount.map(item => item.value));
         const tagBars = tagAmount.length ? `<div class="am-dashboard-bars">${tagAmount.map(item => `<div class="am-bar-hit" data-action="dashboard-tag" data-tag="${escapeHtml(item.tagId)}" title="${escapeHtml(this._t('dashboardBarTapHint', '点击查看明细'))}"><span>${escapeHtml(item.label)}</span><strong>${formatAmountMinor(item.value, 'CNY')}</strong><i style="width:${(item.value / tagMax * 100).toFixed(1)}%"></i></div>`).join('')}</div>` : '';
         // v2.6.5 阶段3a：维度分析卡（品牌 / 渠道 tab 切换，独立 tab 态）。金额折 CNY 聚合
@@ -4911,14 +4916,9 @@ const bindDropdownEvents = () => {
         // 不渲染（同 tagBars 空不渲染模式）。未设置维度条目的资产归入列表末尾「未设置」行。
         const dimensionBrandRows = this._reportDimensionRowsCny(report, 'brand');
         const dimensionChannelRows = this._reportDimensionRowsCny(report, 'channel');
-        // v2.6.5 阶段3c：报表板块显示开关（settings.reportShowBrandRank / reportShowChannelRank，
-        // 缺键按 true 处理 = 默认显示）。品牌/渠道开关全关时 dimensionTabs 为空 → 整卡不渲染；
-        // 单关时对应 tab 从可用集剔除（未设置行随 tab 一起消失）。
-        const showBrandRank = this.settings && this.settings.reportShowBrandRank !== false;
-        const showChannelRank = this.settings && this.settings.reportShowChannelRank !== false;
         const dimensionTabs = [];
-        if (showBrandRank && dimensionBrandRows.some(row => !row.isUnset)) dimensionTabs.push('brand');
-        if (showChannelRank && dimensionChannelRows.some(row => !row.isUnset)) dimensionTabs.push('channel');
+        if (dimensionBrandRows.some(row => !row.isUnset)) dimensionTabs.push('brand');
+        if (dimensionChannelRows.some(row => !row.isUnset)) dimensionTabs.push('channel');
         this._reportDimensionTabsCache = dimensionTabs;
         const dimensionTab = dimensionTabs.indexOf(this._reportDimensionTab) >= 0 ? this._reportDimensionTab : dimensionTabs[0];
         const dimensionRows = dimensionTab === 'channel' ? dimensionChannelRows : dimensionBrandRows;
@@ -6451,7 +6451,10 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
 
     /**
      * v0.17-T1-β：M12 删除 tag（历史 system tag 也允许删除）。
-     *   - 删除时不动 asset.tagIds 引用（保留 id 字符串即可，T1-δ chip 阶段会用 getTagById 跳过已删）
+     *   - v2.6.6 追加：被资产引用时不再拒删——镜像 _deleteDimensionEntry 的级联模式，
+     *     同一事务内把所有引用（asset.tagIds 中的该 id）移除（同步刷新 updatedAt），
+     *     每个受影响资产记一条 update 审计日志，目录条目本身照常记 tag-delete；
+     *     其余标签不受影响，存储层悬空引用审计（REFERENCE_INVALID）由同事务保证
      *   - 返回 boolean
      */
     async deleteTag(tagId) {
@@ -6459,15 +6462,28 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
         if (!this.storage || typeof this.storage.mutateFormalAssetDomain !== 'function') {
             throw new Error('[AssetManagement] formal tag storage unavailable');
         }
+        const target = String(tagId).trim().toLowerCase();
         const context = await this._commitAssetAuditMutation(snapshot => {
-            const tag = snapshot.tags.find(item => item && item.id === tagId);
+            const tag = snapshot.tags.find(item => item && String(item.id || '').trim().toLowerCase() === target);
             if (!tag) return { noop: true, context: { deleted: false } };
-            if (snapshot.assets.some(asset => Array.isArray(asset.tagIds) && asset.tagIds.includes(tagId))) {
-                throw new Error(this._t('tagDeleteReferenced', '该标签仍被资产引用，无法删除'));
-            }
-            const log = { id: createStableId(), type: 'tag-delete', assetId: tag.id, assetName: tag.label,
-                field: null, oldValue: this._cloneForSnapshot(tag), newValue: null, ts: new Date().toISOString() };
-            return { tags: snapshot.tags.filter(item => item && item.id !== tagId), operationLogs: [log].concat(snapshot.operationLogs || []), context: { deleted: true } };
+            const now = new Date().toISOString();
+            const logs = [{ id: createStableId(), type: 'tag-delete', assetId: tag.id, assetName: tag.label,
+                field: null, oldValue: this._cloneForSnapshot(tag), newValue: null, ts: now }];
+            // v2.6.6：引用级联移除。每个受影响资产一条 update 日志（field = tagIds），
+            // 快照前后均为此前已验证的 canonical 资产，可通过 formal 事务审计校验。
+            const nextAssets = (Array.isArray(snapshot.assets) ? snapshot.assets : []).map(asset => {
+                if (!asset || !Array.isArray(asset.tagIds) || !asset.tagIds.some(value => String(value || '').trim().toLowerCase() === target)) return asset;
+                const before = this._cloneForSnapshot(asset);
+                const after = Object.assign({}, asset);
+                after.tagIds = asset.tagIds.filter(value => String(value || '').trim().toLowerCase() !== target);
+                after.updatedAt = now;
+                logs.push({ id: createStableId(), type: 'update', assetId: asset.id, assetName: asset.name,
+                    field: 'tagIds', oldValue: before, newValue: after, ts: now });
+                return after;
+            });
+            return { assets: nextAssets,
+                tags: snapshot.tags.filter(item => item && String(item.id || '').trim().toLowerCase() !== target),
+                operationLogs: logs.concat(snapshot.operationLogs || []), context: { deleted: true } };
         });
         return !!(context && context.deleted);
     }
@@ -7198,7 +7214,7 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
      *   - 顶部 header：标题 + 固定目录提示 + 「+ 新建」按钮
      *   - 中部 list：展示标签及当前资产引用数
      *   - v2.3.0 阶段 2b：每行新增颜色 swatch（_openTagColorPicker → updateTag → refresh）
-     *   - 仅支持创建、删除无引用标签、编辑颜色；不提供改名或 emoji 编辑
+     *   - 仅支持创建、删除（引用级联移除，v2.6.6 起）、编辑颜色；不提供改名或 emoji 编辑
      *   - 关闭按钮
      *   - sheet 内 button onclick **闭包直接绑定**（不走 dock 委托，v0.13 P0 第 8 条教训）
      */
@@ -7213,7 +7229,7 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
                颜色只由 ::after 18px 圆点呈现（用户反馈「颜色不要在圈外」）。 */
             const swatchStyle = tag.color ? ` style="--am-swatch-color:${escapeHtml(tag.color)}"` : '';
                 const swatchLabel = escapeHtml(self._t('tagColorSwatchLabel', '设置标签颜色'));
-                return `<div class="am-tag-manager-row"><button type="button" class="am-tag-color-swatch${tag.color ? '' : ' am-tag-color-swatch--empty'}" data-tag-action="color" data-tag-id="${escapeHtml(tag.id || '')}"${swatchStyle} title="${swatchLabel}" aria-label="${swatchLabel}"></button><span class="am-tag-manager-chip">${escapeHtml(tag.label)}</span><span class="am-settings-tag-row__count">${escapeHtml(self._t('tagReferenceCount', '{n} 项资产引用', { n: refs }))}</span><button class="b3-button b3-button--remove" data-tag-action="delete" data-tag-id="${escapeHtml(tag.id || '')}" ${refs ? 'disabled' : ''}>${escapeHtml(self._t('tagManagerDelete', '删除'))}</button></div>`;
+                return `<div class="am-tag-manager-row"><button type="button" class="am-tag-color-swatch${tag.color ? '' : ' am-tag-color-swatch--empty'}" data-tag-action="color" data-tag-id="${escapeHtml(tag.id || '')}"${swatchStyle} title="${swatchLabel}" aria-label="${swatchLabel}"></button><span class="am-tag-manager-chip">${escapeHtml(tag.label)}</span><span class="am-settings-tag-row__count">${escapeHtml(self._t('tagReferenceCount', '{n} 项资产引用', { n: refs }))}</span><button class="b3-button b3-button--remove" data-tag-action="delete" data-tag-id="${escapeHtml(tag.id || '')}">${escapeHtml(self._t('tagManagerDelete', '删除'))}</button></div>`;
             }).join('') : `<div class="am-tag-manager-empty">${escapeHtml(self._t('tagManagerEmpty', '暂无标签'))}</div>`;
             return `<div class="b3-dialog__content am-tag-manager-dialog"><div class="am-tag-manager-header"><div class="am-tag-manager-header__title">${escapeHtml(self._t('tagManagerTitle', '标签管理'))}</div><div class="am-tag-manager-header__hint">${escapeHtml(self._t('settingsTagsHint', '管理固定标签目录。'))}</div><div class="am-settings-tag-create"><input class="b3-text-field" name="tag-label" maxlength="20" placeholder="${escapeHtml(self._t('tagFieldLabel', '标签名'))}"/><button class="b3-button b3-button--primary" data-tag-action="create">${escapeHtml(self._t('tagManagerAddBtn', '+ 新建标签'))}</button></div></div><div class="am-tag-manager-list">${rows}</div></div><div class="b3-dialog__action"><button class="b3-button b3-button--cancel" data-tag-action="close">${escapeHtml(self._t('btnClose', '关闭'))}</button></div>`;
         };
@@ -7241,8 +7257,12 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
                 });
                 root.querySelectorAll('[data-tag-action="delete"]').forEach(btn => btn.onclick = () => {
                     const tag = self.getTagById(btn.dataset.tagId);
-                    if (!tag || self._getTagReferenceCount(tag) > 0) return;
-                    self._showConfirmDialog(self._t('tagManagerDelete', '删除'), self._t('tagManagerDeleteConfirm', '确认删除未被任何资产引用的此标签？'), async () => { if (await self.deleteTag(tag.id)) refresh(); }, { danger: true });
+                    if (!tag) return;
+                    // v2.6.6 追加：被引用时不再拦截——级联移除，确认弹窗第二行加粗显示关联产品数。
+                    const refs = self._getTagReferenceCount(tag);
+                    const htmlHint = refs > 0 ? self._t('settingsDeleteTagReferencedHint',
+                        '当前被 <b>{n}</b> 个产品关联，删除后移除。', { n: refs }) : '';
+                    self._showConfirmDialog(self._t('tagManagerDelete', '删除'), self._t('tagManagerDeleteConfirm', '确认删除标签「{label}」？此操作不可撤销。', { label: tag.label }), async () => { if (await self.deleteTag(tag.id)) { refresh(); if (self.dockElement) self.renderDock(); } }, { danger: true, htmlHint: htmlHint });
                 });
             };
             bind();
@@ -7744,11 +7764,13 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
      * sheet 内 button onclick 全部 btn.onclick = () => ... 闭包绑定（v0.13 P0 第 8 条教训）
      */
     _showConfirmDialog(title, message, onConfirm, opts = {}) {
+        // v2.6.6 追加：opts.htmlHint 为受控 HTML 第二行（仅固定文案 + 数字占位，不含用户输入）。
+        const messageHtml = escapeHtml(message) + (opts.htmlHint ? '<br/>' + String(opts.htmlHint) : '');
         const html = `
             <div class="b3-dialog__content">
                 <div class="am-bulk-confirm-dialog">
                     <div class="am-bulk-confirm-dialog__icon">${opts.danger ? '⚠️' : '❓'}</div>
-                    <div class="am-bulk-confirm-dialog__text">${escapeHtml(message)}</div>
+                    <div class="am-bulk-confirm-dialog__text">${messageHtml}</div>
                 </div>
             </div>
             <div class="b3-dialog__action">
@@ -10381,20 +10403,6 @@ closeProductCard() {
                     this._applyMatrixColsPreference();
                 };
             });
-            // v2.6.5 阶段3c：报表板块显示开关（标签 / 品牌 / 渠道排行）。
-            // saveSettings 内部 Object.assign 合并（禁止整体覆写——v0.14 教训）；
-            // 缺键按 true 处理，勾选即时保存并刷新报表页生效。
-            root.querySelectorAll('[name="reportShowTagRank"], [name="reportShowBrandRank"], [name="reportShowChannelRank"]').forEach(el => {
-                el.onchange = async () => {
-                    const saved = await this.saveSettings({ [el.name]: el.checked === true });
-                    if (!saved) {
-                        el.checked = this.settings[el.name] !== false;
-                        this.showToast('⚠️ ' + this._t('settingsSaveFail', '设置保存失败'));
-                        return;
-                    }
-                    this.renderDock();
-                };
-            });
             // v2.6.4 P2：汇率设置重构——自动更新开关 + 刷新/恢复按钮 + 三币种手动修正。
             // 手动保存：用户填 X（1 外币 = X CNY）→ rates[cur] = 1/X 合并进当前 rates，
             // 整体替换写入（source='manual'）→ 更新缓存 → 刷新首页 → restoreTab 局部反馈。
@@ -10498,17 +10506,25 @@ closeProductCard() {
                 }
             };
             // v2.6.6：标签删除与品牌 / 渠道同款二次确认（确认弹窗挂载点自动提升到 .b3-dialog 全屏层）。
-            // 标签被引用时按钮仍禁用（引用保护保留），确认文案无需引用提示。
+            // v2.6.6 追加：被引用时不再禁用——同事务级联移除资产上的该标签，
+            // 确认弹窗第一行「确认删除…此操作不可撤销」，第二行加粗显示关联产品数（htmlHint 受控 HTML）。
             root.querySelectorAll('[data-settings-tag-delete]').forEach(button => {
                 button.onclick = () => {
                     const tag = this.getTagById(button.dataset.settingsTagDelete);
                     if (!tag) return;
+                    const refs = this._getTagReferenceCount(tag);
                     this._openScopedConfirm(root, {
                         title: this._t('settingsDeleteTagConfirmTitle', '删除标签'),
-                        text: this._t('settingsDeleteTagConfirmText', '确定删除标签「{label}」吗？此操作不可撤销。', { label: tag.label }),
+                        text: this._t('settingsDeleteTagConfirmText', '确认删除标签「{label}」？此操作不可撤销。', { label: tag.label }),
+                        htmlHint: refs > 0 ? this._t('settingsDeleteTagReferencedHint',
+                            '当前被 <b>{n}</b> 个产品关联，删除后移除。', { n: refs }) : '',
                         onConfirm: async () => {
                             try {
-                                if (await this.deleteTag(button.dataset.settingsTagDelete)) restoreTab();
+                                if (await this.deleteTag(button.dataset.settingsTagDelete)) {
+                                    restoreTab();
+                                    // v2.6.6 追加：级联移除改动了资产 tagIds——同步刷新首页，产品卡上的标签 chip 立即消失。
+                                    if (this.dockElement) this.renderDock();
+                                }
                             } catch (error) {
                                 this.showToast('⚠️ ' + String(error && error.message || error));
                             }
@@ -10561,14 +10577,19 @@ closeProductCard() {
                         title: this._t(isBrand ? 'settingsDeleteBrandConfirmTitle' : 'settingsDeleteChannelConfirmTitle',
                             isBrand ? '删除品牌' : '删除渠道'),
                         text: this._t(isBrand ? 'settingsDeleteBrandConfirmText' : 'settingsDeleteChannelConfirmText',
-                            isBrand ? '确定删除品牌「{label}」吗？此操作不可撤销。' : '确定删除渠道「{label}」吗？此操作不可撤销。',
-                            { label: entry.label })
-                            + (refs > 0 ? '<br/>' + escapeHtml(this._t(isBrand ? 'settingsDeleteBrandReferencedHint' : 'settingsDeleteChannelReferencedHint',
-                                isBrand ? '该品牌正被 {n} 项资产引用，删除后这些资产的品牌将设为未设置。' : '该渠道正被 {n} 项资产引用，删除后这些资产的渠道将设为未设置。', { n: refs })) : ''),
+                            isBrand ? '确认删除品牌「{label}」？此操作不可撤销。' : '确认删除渠道「{label}」？此操作不可撤销。',
+                            { label: entry.label }),
+                        // v2.6.6 追加：引用提示改走 htmlHint（修复 <br/> 被转义字面显示），数量加粗。
+                        htmlHint: refs > 0 ? this._t(isBrand ? 'settingsDeleteBrandReferencedHint' : 'settingsDeleteChannelReferencedHint',
+                            isBrand ? '该品牌正被 <b>{n}</b> 项资产引用，删除后这些资产的品牌将设为未设置。' : '该渠道正被 <b>{n}</b> 项资产引用，删除后这些资产的渠道将设为未设置。', { n: refs }) : '',
                         onConfirm: async () => {
                             try {
                                 const result = isBrand ? await this.deleteBrand(entryId) : await this.deleteChannel(entryId);
-                                if (result && result.deleted) restoreTab();
+                                if (result && result.deleted) {
+                                    restoreTab();
+                                    // v2.6.6 追加：级联置空改动了资产外键——同步刷新首页，产品卡上的品牌 / 渠道角标立即消失。
+                                    if (this.dockElement) this.renderDock();
+                                }
                             } catch (error) {
                                 this.showToast('⚠️ ' + String(error && error.message || error));
                             }
@@ -10802,13 +10823,6 @@ closeProductCard() {
                 <div class="am-settings__radio-group" role="radiogroup" aria-label="${escapeHtml(this._t("matrixColsSettingTitle", "矩阵视图列数"))}">
                     ${['auto', 2, 3, 4].map(opt => { const selected = String(matrixColsPref) === String(opt); return `<label class="am-form__radio${selected ? " am-form__radio--active" : ""}" data-matrix-cols-option="${opt}" role="radio" aria-checked="${selected ? "true" : "false"}"><input type="radio" name="matrixCols" value="${opt}" ${selected ? "checked" : ""}/><span>${escapeHtml(this._matrixColsButtonLabel(opt))}</span></label>`; }).join("")}
                 </div>
-            </div>
-            <div class="am-settings__section">
-                <h3>${escapeHtml(this._t("reportSectionsTitle", "报表显示"))}</h3>
-                <p class="am-settings__hint">${escapeHtml(this._t("reportSectionsHint", "控制报表页显示的排行与分析板块。"))}</p>
-                <label class="am-form__label"><input type="checkbox" name="reportShowTagRank" ${this.settings.reportShowTagRank !== false ? "checked" : ""}/> ${escapeHtml(this._t("reportShowTagRank", "标签排行"))}</label>
-                <label class="am-form__label"><input type="checkbox" name="reportShowBrandRank" ${this.settings.reportShowBrandRank !== false ? "checked" : ""}/> ${escapeHtml(this._t("reportShowBrandRank", "品牌排行"))}</label>
-                <label class="am-form__label"><input type="checkbox" name="reportShowChannelRank" ${this.settings.reportShowChannelRank !== false ? "checked" : ""}/> ${escapeHtml(this._t("reportShowChannelRank", "渠道排行"))}</label>
             </div>
             <div class="am-settings__section am-exchange-rate-settings">
                 <h3>${escapeHtml(this._t("exchangeRateSettingsTitle", "汇率设置"))}</h3>
@@ -11270,10 +11284,9 @@ closeProductCard() {
             const deleteAttr = kind === 'tags'
                 ? ` data-settings-tag-delete="${escapeHtml(entry.id || '')}"`
                 : ` data-settings-entry-delete="${escapeHtml(entry.id || '')}"`;
-            // v2.6.6：品牌 / 渠道删除不再因引用禁用（标签保持原禁用逻辑）；
-            // 删除时有引用则确认弹窗内提示将自动取消引用。
-            const deleteDisabled = kind === 'tags' && refs ? ' disabled' : '';
-            return `<div class="am-settings-tag-row"><button type="button" class="am-tag-color-swatch${entry.color ? '' : ' am-tag-color-swatch--empty'}"${colorAttr}${kindAttr}${swatchStyle} title="${swatchLabel}" aria-label="${swatchLabel}"></button><span>${escapeHtml(entry.label)}</span><span class="am-settings-tag-row__count">${escapeHtml(this._t('tagReferenceCount', '{n} 项资产引用', { n: refs }))}</span><button class="b3-button b3-button--remove"${deleteAttr}${kindAttr}${deleteDisabled}>${escapeHtml(this._t('tagManagerDelete', '删除'))}</button></div>`;
+            // v2.6.6 追加：目录条目（品牌 / 渠道 / 标签）删除均不再因引用禁用；
+            // 删除时有引用则确认弹窗内提示将自动取消引用（标签为级联移除）。
+            return `<div class="am-settings-tag-row"><button type="button" class="am-tag-color-swatch${entry.color ? '' : ' am-tag-color-swatch--empty'}"${colorAttr}${kindAttr}${swatchStyle} title="${swatchLabel}" aria-label="${swatchLabel}"></button><span>${escapeHtml(entry.label)}</span><span class="am-settings-tag-row__count">${escapeHtml(this._t('tagReferenceCount', '{n} 项资产引用', { n: refs }))}</span><button class="b3-button b3-button--remove"${deleteAttr}${kindAttr}>${escapeHtml(this._t('tagManagerDelete', '删除'))}</button></div>`;
         };
         const tabDefs = [
             ['tags', 'settingsCatalogTabTags', '标签'],
@@ -11289,7 +11302,7 @@ closeProductCard() {
         if (catalogTab === 'tags') {
             const tags = this._getAssetTagCatalog();
             const rows = tags.length ? tags.map(tag => rowHtml(tag, 'tags')).join('') : `<div class="am-tag-manager-empty">${escapeHtml(this._t('tagManagerEmpty', '暂无标签'))}</div>`;
-            bodyHtml = `<h3>${escapeHtml(this._t('settingsTagsTitle', '标签管理'))}</h3><p class="am-settings__hint">${escapeHtml(this._t('settingsTagsHint', '管理固定标签目录。标签被引用时不可删除。'))}</p><div class="am-settings-tag-create"><input class="b3-text-field" type="text" name="settingsTagLabel" maxlength="20" placeholder="${escapeHtml(this._t('tagFieldLabel', '标签名'))}"/><button class="b3-button b3-button--primary" data-action="settings-create-tag">${escapeHtml(this._t('tagManagerAddBtn', '+ 新建标签'))}</button></div><div class="am-settings-tag-list">${rows}</div>`;
+            bodyHtml = `<h3>${escapeHtml(this._t('settingsTagsTitle', '标签管理'))}</h3><p class="am-settings__hint">${escapeHtml(this._t('settingsTagsHint', '管理固定标签目录。删除标签时，引用它的资产会自动移除该标签。'))}</p><div class="am-settings-tag-create"><input class="b3-text-field" type="text" name="settingsTagLabel" maxlength="20" placeholder="${escapeHtml(this._t('tagFieldLabel', '标签名'))}"/><button class="b3-button b3-button--primary" data-action="settings-create-tag">${escapeHtml(this._t('tagManagerAddBtn', '+ 新建标签'))}</button></div><div class="am-settings-tag-list">${rows}</div>`;
         } else if (catalogTab === 'brands') {
             const brands = this._getDimensionDirectory('brands');
             const rows = brands.length ? brands.map(entry => rowHtml(entry, 'brands')).join('') : `<div class="am-tag-manager-empty">${escapeHtml(this._t('brandManagerEmpty', '暂无品牌'))}</div>`;

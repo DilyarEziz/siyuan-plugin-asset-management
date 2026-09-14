@@ -17,13 +17,14 @@ Your personal asset keeper in SiYuan · Wishlist / Active / Retired · Daily cos
 
 **Smoother deletions, a steadier settings window, and expired subscriptions now count as retired**
 
-- Improved: brands and purchase channels can now be deleted at any time — even when assets still reference them. On deletion, the plugin clears the brand / channel from those assets (shown as "not set") and tells you upfront how many assets are affected, so there is no need to edit each asset first.
-- Improved: the settings window now keeps a fixed height — based on the plugin's main panel, it no longer grows and shrinks as you switch between settings pages; longer pages scroll inside the window.
-- Fixed: directly created products no longer show a "wishlist journey" — only products that truly went through the wishlist (still wished, or purchased from the wishlist pool) show their wish date and heartbeat records.
-- Improved: deleting a tag now asks for confirmation first — consistent with brands and purchase channels, so a stray click no longer removes a tag.
 - New: the AI assistant now understands brands and purchase channels — it can create brand / channel entries by name and set them on assets when creating or editing them.
 - New: on the home page, all retired products are grouped at the bottom of the list, separated from the rest by a "Retired" divider line for a clear overview.
+- Improved: brands, purchase channels, and tags can now be deleted at any time — even when assets still reference them. On deletion, the plugin clears the brand / channel from those assets (shown as "not set") and removes the tag from their tag lists, and tells you upfront how many assets are affected, so there is no need to edit each asset first.
+- Improved: deleting a brand, channel, or tag now asks for confirmation first — so a stray click no longer removes anything.
+- Improved: the settings window now keeps a fixed height — based on the plugin's main panel, it no longer grows and shrinks as you switch between settings pages; longer pages scroll inside the window.
 - Improved: expired subscriptions now count as retired — they no longer sit in the "Active" list; the "Active" filter excludes them while "Retired" includes them, and the active / retired numbers on the home page and in reports stay in sync. Expired subscription cards show a grey "Expired" badge, while subscriptions with auto-renew on keep their "Pending renewal" badge as before.
+- Improved: the tag, brand, and channel rankings in reports now always show — the "Report Sections" switches are gone from Settings, so there is nothing to enable manually.
+- Fixed: directly created products no longer show a "wishlist journey" — only products that truly went through the wishlist (still wished, or purchased from the wishlist pool) show their wish date and heartbeat records.
 
 ### v2.6.5
 

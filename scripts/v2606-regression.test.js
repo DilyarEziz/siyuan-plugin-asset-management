@@ -103,15 +103,20 @@ function injectExpiredSubscription(plugin, fixture) {
         const result = await plugin.deleteChannel(channel.id);
         assert.deepEqual(result, { deleted: true, clearedRefs: 0 }, 'unreferenced channel deletes cleanly');
         assert.equal(plugin._getDimensionDirectory('channels').length, 0);
-        // UI：品牌 / 渠道删除按钮不因引用禁用（标签保持原禁用逻辑）；
-        // 标签 / 品牌 / 渠道删除均走二次确认（v2.6.6 标签确认对齐）。
+        // UI：品牌 / 渠道 / 标签删除按钮均不因引用禁用（v2.6.6 追加：标签级联移除后放开禁用）；
+        // 标签 / 品牌 / 渠道删除均走二次确认。
         const tag = await plugin.createTag({ label: 'Keep' });
         await plugin.updateAsset(P_ID, { tagIds: [tag.id] });
         const brandsHtml = plugin.renderSettingsTags();
         assert.doesNotMatch(brandsHtml, /disabled[^>]*data-settings-entry-delete|data-settings-entry-delete[^>]*disabled/, 'brand/channel delete button never disabled by refs');
         plugin._settingsCatalogTab = 'tags';
         const tagsHtml = plugin.renderSettingsTags();
-        assert.match(tagsHtml, /data-settings-tag-delete[^>]* disabled|disabled[^>]*data-settings-tag-delete/, 'tag delete stays disabled when referenced');
+        assert.doesNotMatch(tagsHtml, /data-settings-tag-delete[^>]* disabled|disabled[^>]*data-settings-tag-delete/, 'v2.6.6: tag delete button no longer disabled by refs');
+        // v2.6.6 追加：deleteTag 级联——被引用标签可直接删除，资产上的该标签同事务移除。
+        const cascaded = await plugin.deleteTag(tag.id);
+        assert.equal(cascaded, true, 'referenced tag deletes via cascade');
+        assert.deepEqual((await plugin.storage.readFormalV2AssetDomainSnapshot()).assets
+            .find(item => item.id === P_ID).tagIds, [], 'cascaded tag removed from asset');
     }
 
     // ---------- 2. 设置弹窗尺寸动态计算 + 确认弹窗挂载点提升 ----------

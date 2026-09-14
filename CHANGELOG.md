@@ -8,13 +8,14 @@
 
 **删除更顺手、界面更稳定、过期订阅自动归入退役**
 
-- 改进：品牌和购买渠道现在随时可以删除——即使还有资产在用，删除时插件会把这些资产的品牌 / 渠道自动设为「未设置」，并提前告知会影响几项资产，不再需要先逐个改资产才能删。每一步都会记录在操作日志里，随时可查。
-- 改进：设置窗口高度固定不变——以插件主界面高度为基准，切换各个设置页时窗口不再忽高忽低；内容较多时在窗口内上下滚动查看。
-- 修复：直接新建的产品不再显示「种草历程」——只有真正经历过种草的产品（正在种草中，或从种草池购买而来）才展示种草时间和心动记录。
-- 改进：删除标签现在也需要二次确认——与品牌、渠道一致，点「删除」后确认才会真正删除，防止误删。
 - 新增：AI 助手支持品牌与购买渠道——可以按名称新建品牌、渠道条目，并在创建或修改资产时直接设置品牌与渠道。
 - 新增：首页产品列表中，所有退役产品统一排到最后，与前面的产品之间以一条「已退役」分隔线区分，列表一目了然；卡片视图同样生效。
+- 改进：品牌、渠道、标签随时可以删除——即使还有资产在用，删除时插件会把这些资产的品牌 / 渠道自动设为「未设置」、从标签列表自动移除该标签，并提前告知会影响几项资产，不再需要先逐个改资产才能删。每一步都会记录在操作日志里，随时可查。
+- 改进：删除品牌、渠道、标签前都会先二次确认——点「删除」后确认才会真正删除，防止误删。
+- 改进：设置窗口高度固定不变——以插件主界面高度为基准，切换各个设置页时窗口不再忽高忽低；内容较多时在窗口内上下滚动查看。
 - 改进：订阅到期后自动归入退役——不再停留在「在役」；首页筛选「在役」不再包含过期订阅，「已退役」则包含它们，首页与报表的在役 / 退役数字同步更新，在役金额与日均成本也不再计入已过期订阅。过期订阅卡片会显示灰色「已过期」标记，开通了自动续费的订阅仍按原样显示「待续订」。
+- 改进：报表里的标签、品牌、渠道排行默认全部显示——去掉设置页的「报表显示」开关区，不再需要手动开启，设置更简洁。
+- 修复：直接新建的产品不再显示「种草历程」——只有真正经历过种草的产品（正在种草中，或从种草池购买而来）才展示种草时间和心动记录。
 - 构建：版本号升至 `2.6.6`，同步更新双语 README、构建产物和发布包。
 
 ### v2.6.5
@@ -314,13 +315,14 @@
 
 **Smoother deletions, a steadier settings window, and expired subscriptions now count as retired**
 
-- Improved: brands and purchase channels can now be deleted at any time — even when assets still reference them. On deletion, the plugin clears the brand / channel from those assets (shown as "not set") and tells you upfront how many assets are affected, so there is no need to edit each asset first. Every step is recorded in the operation log for later review.
-- Improved: the settings window now keeps a fixed height — based on the plugin's main panel, it no longer grows and shrinks as you switch between settings pages; longer pages scroll inside the window.
-- Fixed: directly created products no longer show a "wishlist journey" — only products that truly went through the wishlist (still wished, or purchased from the wishlist pool) show their wish date and heartbeat records.
-- Improved: deleting a tag now asks for confirmation first — consistent with brands and purchase channels, so a stray click no longer removes a tag.
 - New: the AI assistant now understands brands and purchase channels — it can create brand / channel entries by name and set them on assets when creating or editing them.
 - New: on the home page, all retired products are grouped at the bottom of the list, separated from the rest by a "Retired" divider line for a clear overview; the card view behaves the same.
+- Improved: brands, purchase channels, and tags can now be deleted at any time — even when assets still reference them. On deletion, the plugin clears the brand / channel from those assets (shown as "not set") and removes the tag from their tag lists, and tells you upfront how many assets are affected, so there is no need to edit each asset first. Every step is recorded in the operation log for later review.
+- Improved: deleting a brand, channel, or tag now asks for confirmation first — so a stray click no longer removes anything.
+- Improved: the settings window now keeps a fixed height — based on the plugin's main panel, it no longer grows and shrinks as you switch between settings pages; longer pages scroll inside the window.
 - Improved: expired subscriptions now count as retired — they no longer sit in the "Active" list; the "Active" filter excludes them while "Retired" includes them, and the active / retired numbers on the home page and in reports stay in sync. Expired subscriptions no longer count toward the active net total or daily average. Expired subscription cards show a grey "Expired" badge, while subscriptions with auto-renew on keep their "Pending renewal" badge as before.
+- Improved: the tag, brand, and channel rankings in reports now always show — the "Report Sections" switches are gone from Settings, so there is nothing to enable manually.
+- Fixed: directly created products no longer show a "wishlist journey" — only products that truly went through the wishlist (still wished, or purchased from the wishlist pool) show their wish date and heartbeat records.
 - Build: version bumped to `2.6.6`, with both READMEs, build output, and the release package updated accordingly.
 
 ### v2.6.5
