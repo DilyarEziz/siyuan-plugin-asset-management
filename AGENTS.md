@@ -4,6 +4,10 @@
 
 ## 项目概览
 
+- 当前会话检出（含工作树）为项目根；命令在当前检出执行，不跳回原始 Workspace 主检出。
+- 项目 AI 资产随本仓库提交；领域通用 Skills 与源码 Reference 依赖本机共享目录。Reference 提供路径入口，按需读取正文，不会自动注册领域 Agent。
+- `docs/legacy-domain-guidance.md` 和 `docs/legacy-expert-guidance.md` 仅供历史追溯，可能含过时流程；当前本文件、FORMAL_SCHEMA.md、实际代码和构建脚本优先。
+
 - 思源笔记资产管理插件：物品、会员、预付权益全生命周期（心愿单 → 在用 → 退役），含日成本、到期跟踪、订阅报表、双链笔记、AI 助手、多币种与 JSON/Markdown 导出
 - 当前版本见 `CHANGELOG.md`（语义化版本，双语发布说明）
 - 数据契约见 `FORMAL_SCHEMA.md`；完整功能文档见 `README.md` / `README_zh_CN.md`

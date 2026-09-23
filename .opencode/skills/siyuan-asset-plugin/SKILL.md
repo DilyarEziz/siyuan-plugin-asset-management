@@ -22,10 +22,12 @@ metadata:
 ## 按需参考
 
 - 完整架构、字段、事件、状态机和 UI 设计：`references/full.md`
-- 通用思源插件 API（含 Plugin 类 API 全表、加载流程）：`../siyuan-plugin-dev/`
-- 移动端：`../siyuan-plugin-mobile/`
-- HTTP API：`../siyuan-api-reference/`
-- 集市发布：`../siyuan-plugin-publishing/`
+- 通用思源插件 API（含 Plugin 类 API 全表、加载流程）：按 ID 加载 `siyuan-plugin-dev`
+- 移动端：按 ID 加载 `siyuan-plugin-mobile`
+- HTTP API：按 ID 加载 `siyuan-api-reference`
+- 集市发布：按 ID 加载 `siyuan-plugin-publishing`
+
+这些通用 Skills 由项目 `opencode.jsonc` 从领域事实源桥接，不是本 Skill 的相邻目录。各 Skill 的配套资料相对其自身基础目录读取。
 
 ## 风险提示
 
