@@ -16253,7 +16253,18 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
                     focusBtn.textContent = on ? '⤡' : '⤢';
                     focusBtn.title = on ? collapseLabel : expandLabel;
                     focusBtn.setAttribute('aria-label', on ? collapseLabel : expandLabel);
-                    autoGrow();
+                    if (on) {
+                        // 拉高到表单可视高度（留 24px 呼吸边距，下限 280px），并平滑滚动到备注区
+                        const form = typeof textarea.closest === 'function' ? textarea.closest('form') : null;
+                        focusHeight = Math.max(280, form ? form.clientHeight - 24 : 0);
+                        autoGrow();
+                        if (typeof noteSection.scrollIntoView === 'function') {
+                            noteSection.scrollIntoView({ block: 'start', behavior: 'smooth' });
+                        }
+                    } else {
+                        focusHeight = 0;
+                        autoGrow();
+                    }
                     if (typeof textarea.focus === 'function') textarea.focus();
                 };
                 noteSection.appendChild(focusBtn);
@@ -16299,9 +16310,9 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
         //   - followCaret 光标跟随：浮底保存按钮会盖住表单末尾内容，光标行进入按钮区时
         //     自动滚动滚动容器，让光标行始终保持在按钮上方；镜像 div 测量光标 Y（含软换行）
         let mirror = null;
+        let focusHeight = 0;
         const followCaret = () => {
             try {
-                if (noteSection && noteSection.classList.contains('is-notes-focus')) return;
                 let scroller = textarea.parentNode;
                 while (scroller && scroller.nodeType === 1) {
                     const oy = window.getComputedStyle(scroller).overflowY;
@@ -16352,12 +16363,15 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
             } catch (_) { /* 光标跟随属体验增强，失败不影响输入 */ }
         };
         const autoGrow = () => {
+            // 专注模式下只增不减：高度保持拉高状态（≥focusHeight），内容超出继续自然生长
+            const prevHeight = parseFloat(textarea.style.height) || 0;
+            textarea.style.height = 'auto';
+            const contentHeight = textarea.scrollHeight || 0;
             if (noteSection && noteSection.classList.contains('is-notes-focus')) {
-                textarea.style.height = '100%';
+                textarea.style.height = Math.max(contentHeight, prevHeight, focusHeight) + 'px';
                 return;
             }
-            textarea.style.height = 'auto';
-            textarea.style.height = textarea.scrollHeight + 'px';
+            textarea.style.height = contentHeight + 'px';
             followCaret();
         };
         textarea.addEventListener('input', autoGrow);

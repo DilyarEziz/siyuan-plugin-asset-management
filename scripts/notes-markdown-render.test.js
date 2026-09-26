@@ -28,6 +28,8 @@
  */
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { parseHTML } = require('linkedom');
 const { newFormalV2Asset, normalizeFinancialRecord } = require('../api/assets');
 const { createHarness } = require('./formal-workflow-harness');
@@ -283,6 +285,10 @@ async function main() {
     assert.equal(notesHtml(plugin, { notes: '`a ++b++ c`' }), '<p><code>a ++b++ c</code></p>', 'underline marks inside inline code stay literal');
     assert.equal(notesHtml(plugin, { notes: '++ a ++' }), '<p>++ a ++</p>', 'space-flanked ++ not treated as underline');
 
+    // A21) 嵌套列表缩进 CSS：详情卡备注的内层 ol/ul 必须有缩进（v2.6.7 实验修复「层级拍平」）
+    const cssText = fs.readFileSync(path.join(__dirname, '..', 'index.css'), 'utf8');
+    assert.match(cssText, /\.am-product-notes ol ol,\s*\n\.am-product-notes ol ul,\s*\n\.am-product-notes ul ol,\s*\n\.am-product-notes ul ul \{[\s\S]{0,40}padding-left: 22px/, 'nested lists keep indent in the detail card');
+
     // ===== Part B: 产品详情卡渲染路径 =====
     // 验证 _renderAssetNotesSectionHtml 在 three product card 渲染路径中被使用，
     // 且输出受控 HTML 注入到 .am-product-notes 容器。
@@ -435,6 +441,7 @@ async function main() {
         assert.equal(focusBtn.textContent, '⤢', 'focus button starts collapsed');
         focusBtn.onclick();
         assert.ok(sec.classList.contains('is-notes-focus'), 'focus mode toggles on');
+        assert.equal(taNotes.style.height, '280px', 'focus mode stretches the textarea to the form height (min 280px)');
         assert.equal(focusBtn.textContent, '⤡', 'focus button switches to collapse glyph');
         focusBtn.onclick();
         assert.equal(sec.classList.contains('is-notes-focus'), false, 'focus mode toggles back off');

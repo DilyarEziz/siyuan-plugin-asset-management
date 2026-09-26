@@ -3570,8 +3570,8 @@
 }
 .am-md-rendered li { margin: 1px 0; }
 /* v2.6.7 实验（notes-editor-upgrade）：备注专注模式——
-   右上角展开按钮 + section 覆盖整个表单壳（保存按钮 z-index 3 在其上仍可点）。
-   专注模式下 textarea 由 flex 拉满（autoGrow 跳过内容撑高）。 */
+   不是覆盖层：展开时由 JS 把 textarea 拉高到表单可视高度（只增不减，收起恢复内容高度），
+   section 保持文档流原位，无生硬的界面切换。这里只承载展开态的轻量视觉反馈。 */
 .am-form-notes-section { position: relative; }
 .am-notes-focus-btn {
     position: absolute;
@@ -3592,31 +3592,9 @@
     background: var(--b3-list-hover, rgba(0, 0, 0, 0.06));
     color: var(--b3-theme-on-background);
 }
-.am-form-notes-section.is-notes-focus {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 2;
-    display: flex;
-    flex-direction: column;
-    margin: 0;
-    border: none;
-    border-radius: 0;
-    padding: 10px 20px calc(80px + env(safe-area-inset-bottom, 0));
-    background: var(--b3-theme-background);
-    overflow-y: auto;
-}
-.am-form-notes-section.is-notes-focus .am-md-editor {
-    flex: 1 1 auto;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-}
+.am-form-notes-section.is-notes-focus .am-form-textarea__field,
 .am-form-notes-section.is-notes-focus textarea {
-    flex: 1 1 auto;
-    min-height: 45vh;
+    border-color: color-mix(in srgb, var(--am-blue) 35%, var(--b3-border-color));
 }
 /* v2.6.7：行内 Markdown（与详情卡 .am-product-notes 同口径） */
 .am-md-rendered strong { font-weight: 700; }
@@ -14139,6 +14117,15 @@
 }
 .am-product-notes > ol:last-child,
 .am-product-notes > ul:last-child { margin-bottom: 0; }
+/* v2.6.7 实验：嵌套列表缩进——内层 ol/ul 是外层列表的子节点（非 .am-product-notes 直接子元素），
+   子选择器覆盖不到导致详情卡里嵌套层级「拍平」；这里按后代选择器补齐缩进与间距。 */
+.am-product-notes ol ol,
+.am-product-notes ol ul,
+.am-product-notes ul ol,
+.am-product-notes ul ul {
+    margin: 2px 0;
+    padding-left: 22px;
+}
 .am-product-notes > li {
     margin: 2px 0;
     line-height: 1.6;
