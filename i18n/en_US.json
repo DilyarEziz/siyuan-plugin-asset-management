@@ -200,7 +200,6 @@
   "warrantyDaysRemaining": "{n} Warranty Days Left",
   "warrantyExpiredBadge": "Out of warranty",
   "warrantyExpiringSoon": "Warranty expiring soon",
-  "markdownShortcutHint": "{mod}+B bold · {mod}+I italic · {mod}+U underline · {mod}+Shift+S strikethrough · {mod}+Shift+K code",
   "warrantyUntilDate": "Warranty until {date}",
   "warrantyDaysLeft": "{n} days left",
   "fieldStatus": "Status",

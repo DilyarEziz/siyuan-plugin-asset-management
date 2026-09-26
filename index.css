@@ -3569,16 +3569,6 @@
     padding-left: 20px;
 }
 .am-md-rendered li { margin: 1px 0; }
-/* v2.6.7：备注输入框下方行内快捷键提示（仅资产备注 textarea 渲染，见 _bindMarkdownTextarea） */
-.am-md-shortcut-hint {
-    margin-top: 4px;
-    font-size: 11px;
-    line-height: 1.5;
-    text-align: left;
-    color: var(--b3-text-color-secondary, rgba(0, 0, 0, 0.5));
-    user-select: none;
-    -webkit-user-select: none;
-}
 /* v2.6.7：行内 Markdown（与详情卡 .am-product-notes 同口径） */
 .am-md-rendered strong { font-weight: 700; }
 .am-md-rendered em { font-style: italic; }
@@ -14100,6 +14090,15 @@
 }
 .am-product-notes > ol:last-child,
 .am-product-notes > ul:last-child { margin-bottom: 0; }
+/* v2.6.7 实验：嵌套列表缩进——内层 ol/ul 是外层列表的子节点（非 .am-product-notes 直接子元素），
+   子选择器覆盖不到导致详情卡里嵌套层级「拍平」；这里按后代选择器补齐缩进与间距。 */
+.am-product-notes ol ol,
+.am-product-notes ol ul,
+.am-product-notes ul ol,
+.am-product-notes ul ul {
+    margin: 2px 0;
+    padding-left: 22px;
+}
 .am-product-notes > li {
     margin: 2px 0;
     line-height: 1.6;

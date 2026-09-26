@@ -18,7 +18,8 @@ Your personal asset keeper in SiYuan · Wishlist / Active / Retired · Daily cos
 **Consistent out-of-warranty wording, bold notes, and selectable detail-card text**
 
 - New: asset notes now support inline Markdown — bold `**text**`, italic `*text*`, underline `++text++`, strikethrough `~~text~~`, and inline code render in both the product detail card and the edit-form preview; the saved source text is untouched and HTML is safely escaped.
-- New: notes editing supports SiYuan's familiar shortcuts — ⌘/Ctrl+B bold, ⌘/Ctrl+I italic, ⌘/Ctrl+U underline, ⌘/Ctrl+Shift+S strikethrough, ⌘/Ctrl+Shift+K inline code; press once to wrap the selection, again to unwrap, with a shortcut hint below the notes field.
+- New: notes editing supports SiYuan's familiar shortcuts — ⌘/Ctrl+B bold, ⌘/Ctrl+I italic, ⌘/Ctrl+U underline, ⌘/Ctrl+Shift+S strikethrough, ⌘/Ctrl+Shift+K inline code; press once to wrap the selection, again to unwrap.
+- New: click anywhere on the rendered notes preview to start editing from that exact spot; the caret line stays visible above the save button while typing.
 - Improved: text in the product detail card (including notes) can now be drag-selected and copied — SiYuan panels disable text selection by default, and the detail card now opts back in; releasing a selection drag over the backdrop no longer closes the card by accident.
 - Improved: warranty and subscription reminders are now clearly separated — physical products nearing warranty end show "Warranty expiring soon" (subscriptions keep the date / "ends in N days" wording) and warranty due today shows "Warranty ends today", consistently on the home expiry reminder and the report's expiring list.
 - Improved: physical products past their warranty now show "Out of warranty" instead of the subscription-flavored "Expired" on list and matrix cards.

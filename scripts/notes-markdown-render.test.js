@@ -28,6 +28,8 @@
  */
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { parseHTML } = require('linkedom');
 const { newFormalV2Asset, normalizeFinancialRecord } = require('../api/assets');
 const { createHarness } = require('./formal-workflow-harness');
@@ -283,6 +285,10 @@ async function main() {
     assert.equal(notesHtml(plugin, { notes: '`a ++b++ c`' }), '<p><code>a ++b++ c</code></p>', 'underline marks inside inline code stay literal');
     assert.equal(notesHtml(plugin, { notes: '++ a ++' }), '<p>++ a ++</p>', 'space-flanked ++ not treated as underline');
 
+    // A21) 嵌套列表缩进 CSS：详情卡备注的内层 ol/ul 必须有缩进（v2.6.7 实验修复「层级拍平」）
+    const cssText = fs.readFileSync(path.join(__dirname, '..', 'index.css'), 'utf8');
+    assert.match(cssText, /\.am-product-notes ol ol,\s*\n\.am-product-notes ol ul,\s*\n\.am-product-notes ul ol,\s*\n\.am-product-notes ul ul \{[\s\S]{0,40}padding-left: 22px/, 'nested lists keep indent in the detail card');
+
     // ===== Part B: 产品详情卡渲染路径 =====
     // 验证 _renderAssetNotesSectionHtml 在 three product card 渲染路径中被使用，
     // 且输出受控 HTML 注入到 .am-product-notes 容器。
@@ -417,12 +423,27 @@ async function main() {
         assert.equal(fireKey({ code: 'KeyB', ctrlKey: true, altKey: true, shiftKey: false }), false, 'Cmd+Option+B (heading tier combo) is not intercepted');
         assert.equal(ta.value, '# plain heading line', 'heading combo leaves the value untouched');
 
-        // D3) 备注输入框渲染快捷键提示行；销毁后随 wrapper 移除
-        const hint = ta.parentNode.querySelector('[data-md-shortcut-hint]');
-        assert.ok(hint, 'notes textarea shows the shortcut hint line');
-        assert.match(hint.textContent, /Ctrl\+B/, 'hint lists the bold shortcut');
+        // D3) 快捷键提示已完整移除；专注模式 UI 已完整移除
+        assert.equal(ta.parentNode.querySelector('[data-md-shortcut-hint]'), null, 'shortcut hint line is fully removed');
         binding.destroy();
-        assert.equal(doc8.querySelector('[data-md-shortcut-hint]'), null, 'destroy removes the hint with the wrapper');
+        assert.equal(doc8.querySelector('[data-md-shortcut-hint]'), null, 'destroy leaves no hint residue');
+        assert.equal(doc8.querySelector('[data-notes-focus], .am-notes-focus-btn'), null, 'focus mode UI is fully removed');
+
+        // D4) 点击渲染预览定位输入：渲染文本偏移 → 原始 Markdown 偏移 的映射表
+        // 原文：'# 标题' '' '- 项目 **加粗**' '1. 第一' '' '正文行'
+        const rawDoc = '# 标题\n\n- 项目 **加粗**\n1. 第一\n\n正文行';
+        const entries = p8._buildNotesLineMap(rawDoc);
+        assert.equal(entries.length, 4, 'four non-blank lines mapped');
+        assert.equal(p8._mdNotesOffsetFromRendered(entries, 0), 2, 'heading start maps to heading content');
+        assert.equal(p8._mdNotesOffsetFromRendered(entries, 3), 8, 'list item start maps after the marker');
+        assert.equal(p8._mdNotesOffsetFromRendered(entries, 6), 13, 'clicked bold content maps past the ** markers');
+        assert.equal(p8._mdNotesOffsetFromRendered(entries, 9), 21, 'ordered item start maps after "1. "');
+        assert.equal(p8._mdNotesOffsetFromRendered(entries, 14), 27, 'last line column maps to raw column');
+        assert.equal(p8._mdNotesOffsetFromRendered(entries, 99), 27, 'overflow offset clamps to line end');
+        assert.equal(p8._mdNotesOffsetFromRendered([], 0), null, 'empty map returns null');
+        assert.equal(p8._stripNotesInlineMarkers('a **加粗** c').text, 'a 加粗 c', 'inline markers stripped for mapping');
+        const codeSpan = p8._stripNotesInlineMarkers(String.fromCharCode(96) + 'a **b** c' + String.fromCharCode(96));
+        assert.equal(codeSpan.text, 'a **b** c', 'marks inside inline code stay literal');
     }
 
     // ===== Part C: 表单保存路径不回归 =====

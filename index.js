@@ -28,6 +28,9 @@
  *   - 备注行内 Markdown：加粗 **x**、斜体 *x*、删除线 ~~x~~、行内代码 `x`——
  *       escape 之后单遍受控替换（详情卡备注与编辑表单预览同步支持），
  *       不支持 _x_ 下划线语法（避免误伤 snake_case），CSS 同步补 strong/em/del/code 样式
+ *   - 备注编辑：光标跟随滚动——浮底保存按钮不再遮挡光标行（镜像 div 测量光标 Y，
+ *       进入按钮区自动上滚）；点击渲染预览任意位置即可定位到该处开始编辑
+ *       （行映射表把渲染偏移换算回原始 Markdown 偏移，跳过标记宽度）
  *
  * v2.6.6（目录删除放开 + 设置弹窗定高 + 种草历程门卫 + 首页退役分组 + 过期即退役口径）：
  *   - 品牌 / 渠道删除放开：被资产引用时不再拒绝删除，同一事务内自动把引用该项的
@@ -16230,21 +16233,6 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
         const noteSection = textarea.closest ? textarea.closest('.am-form-section') : null;
         if (noteSection) noteSection.classList.add('am-md-section');
 
-        // v2.6.7：行内样式快捷键提示（仅资产备注 textarea；退役 / 转让等小表单的
-        // Markdown 输入不加，避免视觉噪音）。键位前缀按运行平台显示 ⌘ / Ctrl。
-        if (textarea.name === 'notes' && typeof document !== 'undefined') {
-            try {
-                const nav = typeof navigator !== 'undefined' ? navigator : null;
-                const isMac = /Mac|iPhone|iPad/i.test(String((nav && (nav.platform || nav.userAgent)) || ''));
-                const mod = isMac ? '⌘' : 'Ctrl';
-                const hint = document.createElement('div');
-                hint.className = 'am-md-shortcut-hint';
-                hint.setAttribute('data-md-shortcut-hint', '');
-                hint.textContent = this._t('markdownShortcutHint', '{mod}+B 加粗 · {mod}+I 斜体 · {mod}+U 下划线 · {mod}+Shift+S 删除线 · {mod}+Shift+K 代码').replaceAll('{mod}', mod);
-                wrapper.appendChild(hint);
-            } catch (_) { /* 提示属纯装饰，任何环境下失败都不影响输入 */ }
-        }
-
         const renderView = () => {
             const html = this._renderAssetNotesHtml(textarea.value);
             if (html) {
@@ -16256,10 +16244,48 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
             }
         };
 
-        // 点击渲染区域 → 进入编辑
-        const onRenderedClick = () => {
+        // 点击渲染区域 → 进入编辑，并把光标定位到点击处（v2.6.7 实验：点击定位输入）
+        const onRenderedClick = (event) => {
+            // 顺序关键：必须趁渲染层还可见时先用点击坐标拿渲染 DOM 位置；
+            // 一旦切到编辑态（rendered 隐藏），caretRangeFromPoint 会命中别处导致定位失效
+            let position = null;
+            try {
+                if (document.caretRangeFromPoint) {
+                    const range = document.caretRangeFromPoint(event.clientX, event.clientY);
+                    if (range && rendered.contains(range.startContainer)) {
+                        position = { node: range.startContainer, offset: range.startOffset };
+                    }
+                } else if (document.caretPositionFromPoint) {
+                    const pos = document.caretPositionFromPoint(event.clientX, event.clientY);
+                    if (pos && rendered.contains(pos.offsetNode)) {
+                        position = { node: pos.offsetNode, offset: pos.offset };
+                    }
+                }
+            } catch (_) { /* 定位属体验增强，失败则落到默认光标位置 */ }
+            // 记录点击前的滚动位置：textarea 与渲染视图内容等高，编辑态还原同一滚动量
+            // 即可做到「界面纹丝不动，光标就落在点击处」
+            const scroller = getNotesScroller();
+            const prevScroll = scroller ? scroller.scrollTop : 0;
             wrapper.classList.add('is-editing');
-            textarea.focus();
+            if (position) {
+                try {
+                    // 先设光标再 focus：focus 的自动滚动目标就是点击处，界面不会跳顶
+                    const renderedOffset = this._mdCaretOffsetInRendered(rendered, position.node, position.offset);
+                    const entries = this._buildNotesLineMap(textarea.value);
+                    const rawOffset = this._mdNotesOffsetFromRendered(entries, renderedOffset);
+                    if (rawOffset != null && typeof textarea.setSelectionRange === 'function') {
+                        textarea.setSelectionRange(rawOffset, rawOffset);
+                    }
+                } catch (_) { /* 定位属体验增强，失败则落到默认光标位置 */ }
+            }
+            // preventScroll 阻止 focus 把高 textarea 顶部对齐视口（卡片瞬移的元凶），
+            // 不支持该参数的旧内核忽略后由下方 scrollTop 还原兜底
+            try {
+                textarea.focus({ preventScroll: true });
+            } catch (_) {
+                textarea.focus();
+            }
+            if (scroller) scroller.scrollTop = prevScroll;
             // v1.4.0：textarea 在查看态 display:none，scrollHeight 不可靠；切回编辑态变可见后
             // 必须重算 autoGrow，否则高度停留在窄值（"编辑态边框比查看态窄"的根因）。
             autoGrow();
@@ -16279,11 +16305,107 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
         renderView();
 
         // v1.4.0：textarea 随内容自动撑高
-        const autoGrow = () => {
-            textarea.style.height = 'auto';
-            textarea.style.height = textarea.scrollHeight + 'px';
+        // v2.6.7 实验（notes-editor-upgrade）：
+        //   - 专注模式下 textarea 由 flex 拉满，跳过内容撑高
+        //   - followCaret 光标跟随：浮底保存按钮会盖住表单末尾内容，光标行进入按钮区时
+        //     自动滚动滚动容器，让光标行始终保持在按钮上方；镜像 div 测量光标 Y（含软换行）
+        // v2.6.7 实验：光标跟随与点击定位共用的滚动容器查找
+        let mirror = null;
+        const getNotesScroller = () => {
+            let node = textarea.parentNode;
+            while (node && node.nodeType === 1) {
+                const oy = window.getComputedStyle(node).overflowY;
+                if (oy === 'auto' || oy === 'scroll') return node;
+                node = node.parentNode;
+            }
+            return null;
         };
-        textarea.addEventListener('input', autoGrow);
+        const followCaret = () => {
+            try {
+                const scroller = getNotesScroller();
+                if (!scroller) return;
+                const shell = typeof textarea.closest === 'function' ? textarea.closest('.am-form-shell') : null;
+                const footer = shell ? shell.querySelector('.am-form-shell__footer') : null;
+                const reserve = footer ? footer.offsetHeight + 12 : 24;
+                if (!mirror) {
+                    mirror = document.createElement('div');
+                    mirror.setAttribute('aria-hidden', 'true');
+                    const init = mirror.style;
+                    init.position = 'absolute';
+                    init.top = '0';
+                    init.left = '-9999px';
+                    init.visibility = 'hidden';
+                    init.whiteSpace = 'pre-wrap';
+                    init.overflowWrap = 'anywhere';
+                    document.body.appendChild(mirror);
+                }
+                const ts = window.getComputedStyle(textarea);
+                // 逐项复制 longhand 字体属性：font 简写在部分内核赋值会静默失败，
+                // 镜像字体与 textarea 不一致时中文长段落换行数漂移，光标 Y 累计失准
+                const ms = mirror.style;
+                ms.width = textarea.clientWidth + 'px';
+                ms.fontFamily = ts.fontFamily;
+                ms.fontSize = ts.fontSize;
+                ms.fontWeight = ts.fontWeight;
+                ms.fontStyle = ts.fontStyle;
+                ms.lineHeight = ts.lineHeight;
+                ms.letterSpacing = ts.letterSpacing;
+                ms.wordSpacing = ts.wordSpacing;
+                ms.textIndent = ts.textIndent;
+                ms.padding = ts.padding;
+                ms.border = ts.border;
+                ms.boxSizing = ts.boxSizing;
+                ms.whiteSpace = ts.whiteSpace;
+                ms.overflowWrap = ts.overflowWrap;
+                ms.wordBreak = ts.wordBreak;
+                ms.tabSize = ts.tabSize;
+                const caret = textarea.selectionStart == null ? textarea.value.length : textarea.selectionStart;
+                // 追加零宽字符：光标在行尾换行符之后时强制渲染出新行，高度测量才包含它
+                mirror.textContent = String(textarea.value).slice(0, caret) + '\u200b';
+                const caretYInTextarea = mirror.scrollHeight;
+                mirror.textContent = '';
+                const lineHeight = parseFloat(ts.lineHeight) || 18;
+                const scrollerRect = scroller.getBoundingClientRect();
+                const taRect = textarea.getBoundingClientRect();
+                // 光标的视口 Y = textarea 视口顶 + 光标在 textarea 内的 Y（autoGrow 后 textarea 不自滚）
+                // 坐标系全程用视口坐标，与 scrollerRect 比较；绝不掺入 scrollTop（内容坐标），否则
+                // 滚动越深偏差越大，一输入就被误判「光标在可视区外」导致界面大幅跳动。
+                const caretViewportY = taRect.top + caretYInTextarea - (textarea.scrollTop || 0);
+                const visibleTop = scrollerRect.top;
+                const visibleBottom = scrollerRect.bottom - reserve;
+                if (caretViewportY > visibleBottom) {
+                    scroller.scrollTop += Math.min(caretViewportY - visibleBottom + lineHeight, 240);
+                } else if (caretViewportY < visibleTop) {
+                    scroller.scrollTop -= Math.min(visibleTop - caretViewportY + lineHeight, 240);
+                }
+            } catch (_) { /* 光标跟随属体验增强，失败不影响输入 */ }
+        };
+        const autoGrow = (skipCaret) => {
+            // 关键：height:auto 测量的瞬间 textarea 会塌缩成 rows 高度，表单内容骤然变短，
+            // 浏览器会把滚动容器的 scrollTop 钳制到新的最大值——滚动越深被砍越多，
+            // 恢复高度后也不会回来，表现为「一输入界面就跳顶」。先记后还，全程同步无渲染。
+            let scroller = null;
+            let prevScroll = 0;
+            try {
+                scroller = getNotesScroller();
+                prevScroll = scroller ? scroller.scrollTop : 0;
+            } catch (_) {
+                scroller = null;
+            }
+            textarea.style.height = 'auto';
+            const contentHeight = textarea.scrollHeight || 0;
+            textarea.style.height = contentHeight + 'px';
+            try {
+                if (scroller) scroller.scrollTop = prevScroll;
+            } catch (_) { /* 还原失败不影响输入 */ }
+            if (!skipCaret) followCaret();
+        };
+        // 中文输入法组词过程中跳过光标跟随：系统候选词处理已在保持光标可见，
+        // 此期间再滚动会与输入法互相打架；组词结束（compositionend）后补一次跟随
+        const onNotesInput = (event) => { autoGrow(!!(event && event.isComposing)); };
+        const onNotesCompositionEnd = () => followCaret();
+        textarea.addEventListener('input', onNotesInput);
+        textarea.addEventListener('compositionend', onNotesCompositionEnd);
         autoGrow(); // 初始化（覆盖预填内容）
 
         const onKeyDown = e => {
@@ -16374,10 +16496,14 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
 
         return {
             destroy() {
-                textarea.removeEventListener('input', autoGrow);
+                textarea.removeEventListener('input', onNotesInput);
+                textarea.removeEventListener('compositionend', onNotesCompositionEnd);
                 textarea.removeEventListener('keydown', onKeyDown);
                 rendered.removeEventListener('click', onRenderedClick);
                 textarea.removeEventListener('blur', onTextareaBlur);
+                // v2.6.7 实验：清理光标跟随用的镜像测量节点
+                if (mirror && mirror.parentNode) mirror.parentNode.removeChild(mirror);
+                mirror = null;
                 // 恢复 textarea 到 wrapper 外面
                 if (wrapper.parentNode) wrapper.parentNode.insertBefore(textarea, wrapper);
                 wrapper.remove();
@@ -16517,6 +16643,133 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
         setSelection(nextStart, nextEnd);
         textarea.dispatchEvent(createPluginDomEvent(textarea, 'input'));
         return true;
+    }
+
+    /**
+     * v2.6.7 实验（notes-editor-upgrade）：构建备注「渲染文本 → 原始 Markdown」行映射表。
+     * 与 _renderAssetNotesHtml 同一套行规则：非空行各渲染为一行（标题 / 列表剥掉行首标记，
+     * 行内标记剥离），行间以换行连接；空行不产生渲染行。
+     * 返回数组项 { renderedStart, rawStart, colMap }：
+     *   - renderedStart：该行在渲染文本流中的起始偏移（行间以换行相连）
+     *   - rawStart：该行可见内容的原始偏移（行首标记之后）
+     *   - colMap：可见列 → 原始列（相对 rawStart）的映射，标记处会跳过定界符宽度
+     * 纯函数，无 DOM 依赖；供点击渲染预览定位光标使用。
+     */
+    _buildNotesLineMap(raw) {
+        const lines = String(raw == null ? '' : raw).split(/\r\n|\r|\n/);
+        const entries = [];
+        let rawStart = 0;
+        let renderedStart = 0;
+        for (const line of lines) {
+            const rawEnd = rawStart + line.length;
+            if (line.trim()) {
+                let prefix = 0;
+                let content = line;
+                const heading = /^(#{1,6})\s+/.exec(line);
+                const ordered = /^(\s*)(\d+)\.\s+/.exec(line);
+                const unordered = /^(\s*)[-*+]\s+/.exec(line);
+                if (heading) { prefix = heading[0].length; content = line.slice(prefix); }
+                else if (ordered) { prefix = ordered[0].length; content = line.slice(prefix); }
+                else if (unordered) { prefix = unordered[0].length; content = line.slice(prefix); }
+                const stripped = this._stripNotesInlineMarkers(content);
+                entries.push({
+                    renderedStart: renderedStart,
+                    rawStart: rawStart + prefix,
+                    colMap: stripped.colMap,
+                });
+                renderedStart += stripped.text.length + 1;
+            }
+            rawStart = rawEnd + 1;
+        }
+        return entries;
+    }
+
+    /**
+     * v2.6.7 实验：剥离一行文本中的行内标记（加粗 / 斜体 / 删除线 / 下划线 / 行内代码），
+     * 返回 { text, colMap }——text 为渲染后的可见文本，colMap[i] 是可见第 i 列对应的
+     * 原始列（0 起算）。与渲染器的成对定界规则近似，用于点击定位的列映射，非渲染本身。
+     */
+    _stripNotesInlineMarkers(line) {
+        const text = String(line == null ? '' : line);
+        const bt = String.fromCharCode(96);
+        let out = '';
+        let colMap = [];
+        let i = 0;
+        while (i < text.length) {
+            const ch = text.charAt(i);
+            if (ch === bt) {
+                const end = text.indexOf(bt, i + 1);
+                if (end > i) {
+                    for (let k = i + 1; k < end; k++) colMap.push(k);
+                    out += text.slice(i + 1, end);
+                    i = end + 1;
+                    continue;
+                }
+            }
+            const pair = text.slice(i, i + 2);
+            if (pair === '**' || pair === '~~' || pair === '++') {
+                const end = text.indexOf(pair, i + 2);
+                if (end > i + 1) {
+                    for (let k = i + 2; k < end; k++) colMap.push(k);
+                    out += text.slice(i + 2, end);
+                    i = end + 2;
+                    continue;
+                }
+            }
+            if (ch === '*') {
+                const end = text.indexOf('*', i + 1);
+                if (end > i) {
+                    for (let k = i + 1; k < end; k++) colMap.push(k);
+                    out += text.slice(i + 1, end);
+                    i = end + 1;
+                    continue;
+                }
+            }
+            colMap.push(i);
+            out += ch;
+            i += 1;
+        }
+        return { text: out, colMap: colMap };
+    }
+
+    /** 渲染文本偏移 → 原始 Markdown 偏移：取命中行（最后一个 renderedStart ≤ 偏移的行），
+     *  列经 colMap 换算，超出行尾时截断到行尾。无映射表 / 非法偏移返回 null。 */
+    _mdNotesOffsetFromRendered(entries, renderedOffset) {
+        if (!entries || !entries.length || renderedOffset == null || !Number.isFinite(renderedOffset)) return null;
+        let hit = entries[0];
+        for (const entry of entries) {
+            if (renderedOffset >= entry.renderedStart) hit = entry;
+        }
+        const column = Math.max(0, renderedOffset - hit.renderedStart);
+        const map = hit.colMap && hit.colMap.length ? hit.colMap : [0];
+        const mapped = map[Math.min(column, map.length - 1)];
+        return hit.rawStart + mapped;
+    }
+
+    /**
+     * 计算点击处（DOM 节点 + 偏移）在渲染容器文本流中的偏移：文本节点按字符累计，
+     * BR 记 1 个换行，进入 P / 标题 / LI 块边界记 1 个换行——与 _buildNotesLineMap 的
+     * 行间连接规则一致，两表配合才能把点击位置正确换算回原始 Markdown 偏移。
+     */
+    _mdCaretOffsetInRendered(container, node, offset) {
+        if (!container || !node || typeof document === 'undefined' || !document.createTreeWalker) return null;
+        if (!container.contains(node)) return null;
+        const walker = document.createTreeWalker(container, 5);
+        let count = 0;
+        let current;
+        while ((current = walker.nextNode())) {
+            if (current === node) {
+                return node.nodeType === 3 ? count + offset : count;
+            }
+            if (current.nodeType === 3) {
+                count += current.textContent.length;
+            } else if (current.tagName === 'BR') {
+                count += 1;
+            } else if (/^(P|H[1-6]|LI)$/.test(current.tagName) && count > 0) {
+                count += 1;
+            }
+        }
+        return count;
     }
 
     /**
