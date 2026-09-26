@@ -200,8 +200,6 @@
   "warrantyDaysRemaining": "保修剩余 {n} 天",
   "warrantyExpiredBadge": "已过保",
   "warrantyExpiringSoon": "即将过保",
-  "notesFocusExpand": "专注模式",
-  "notesFocusCollapse": "退出专注模式",
   "warrantyUntilDate": "保修至 {date}",
   "warrantyDaysLeft": "剩 {n} 天",
   "fieldStatus": "状态",

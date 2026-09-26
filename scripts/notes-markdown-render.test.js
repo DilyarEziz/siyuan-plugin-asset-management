@@ -423,34 +423,27 @@ async function main() {
         assert.equal(fireKey({ code: 'KeyB', ctrlKey: true, altKey: true, shiftKey: false }), false, 'Cmd+Option+B (heading tier combo) is not intercepted');
         assert.equal(ta.value, '# plain heading line', 'heading combo leaves the value untouched');
 
-        // D3) 快捷键提示已完整移除；备注 section 获得专注模式按钮并可来回切换
+        // D3) 快捷键提示已完整移除；专注模式 UI 已完整移除
         assert.equal(ta.parentNode.querySelector('[data-md-shortcut-hint]'), null, 'shortcut hint line is fully removed');
-
-        const sec = doc8.createElement('section');
-        sec.className = 'am-form-section am-form-notes-section';
-        const title = doc8.createElement('div');
-        title.className = 'am-form-section__title';
-        sec.appendChild(title);
-        const taNotes = doc8.createElement('textarea');
-        taNotes.setAttribute('name', 'notes');
-        sec.appendChild(taNotes);
-        doc8.body.appendChild(sec);
-        const bindingNotes = p8._bindMarkdownTextarea(taNotes);
-        const focusBtn = sec.querySelector('[data-notes-focus]');
-        assert.ok(focusBtn, 'notes section gets the focus toggle button');
-        assert.equal(focusBtn.textContent, '⤢', 'focus button starts collapsed');
-        focusBtn.onclick();
-        assert.ok(sec.classList.contains('is-notes-focus'), 'focus mode toggles on');
-        assert.equal(taNotes.style.height, '280px', 'focus mode stretches the textarea to the form height (min 280px)');
-        assert.equal(focusBtn.textContent, '⤡', 'focus button switches to collapse glyph');
-        focusBtn.onclick();
-        assert.equal(sec.classList.contains('is-notes-focus'), false, 'focus mode toggles back off');
-        assert.equal(focusBtn.textContent, '⤢', 'focus button restores expand glyph');
-        bindingNotes.destroy();
-        assert.equal(sec.querySelector('[data-notes-focus]'), null, 'destroy removes the focus button');
-        assert.equal(sec.classList.contains('is-notes-focus'), false, 'destroy clears focus state');
         binding.destroy();
         assert.equal(doc8.querySelector('[data-md-shortcut-hint]'), null, 'destroy leaves no hint residue');
+        assert.equal(doc8.querySelector('[data-notes-focus], .am-notes-focus-btn'), null, 'focus mode UI is fully removed');
+
+        // D4) 点击渲染预览定位输入：渲染文本偏移 → 原始 Markdown 偏移 的映射表
+        // 原文：'# 标题' '' '- 项目 **加粗**' '1. 第一' '' '正文行'
+        const rawDoc = '# 标题\n\n- 项目 **加粗**\n1. 第一\n\n正文行';
+        const entries = p8._buildNotesLineMap(rawDoc);
+        assert.equal(entries.length, 4, 'four non-blank lines mapped');
+        assert.equal(p8._mdNotesOffsetFromRendered(entries, 0), 2, 'heading start maps to heading content');
+        assert.equal(p8._mdNotesOffsetFromRendered(entries, 3), 8, 'list item start maps after the marker');
+        assert.equal(p8._mdNotesOffsetFromRendered(entries, 6), 13, 'clicked bold content maps past the ** markers');
+        assert.equal(p8._mdNotesOffsetFromRendered(entries, 9), 21, 'ordered item start maps after "1. "');
+        assert.equal(p8._mdNotesOffsetFromRendered(entries, 14), 27, 'last line column maps to raw column');
+        assert.equal(p8._mdNotesOffsetFromRendered(entries, 99), 27, 'overflow offset clamps to line end');
+        assert.equal(p8._mdNotesOffsetFromRendered([], 0), null, 'empty map returns null');
+        assert.equal(p8._stripNotesInlineMarkers('a **加粗** c').text, 'a 加粗 c', 'inline markers stripped for mapping');
+        const codeSpan = p8._stripNotesInlineMarkers(String.fromCharCode(96) + 'a **b** c' + String.fromCharCode(96));
+        assert.equal(codeSpan.text, 'a **b** c', 'marks inside inline code stay literal');
     }
 
     // ===== Part C: 表单保存路径不回归 =====

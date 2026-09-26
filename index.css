@@ -3569,33 +3569,6 @@
     padding-left: 20px;
 }
 .am-md-rendered li { margin: 1px 0; }
-/* v2.6.7 实验（notes-editor-upgrade）：备注专注模式——
-   不是覆盖层：展开时由 JS 把 textarea 拉高到表单可视高度（只增不减，收起恢复内容高度），
-   section 保持文档流原位，无生硬的界面切换。这里只承载展开态的轻量视觉反馈。 */
-.am-form-notes-section { position: relative; }
-.am-notes-focus-btn {
-    position: absolute;
-    top: 8px;
-    right: 10px;
-    z-index: 2;
-    width: 26px;
-    height: 26px;
-    border: none;
-    border-radius: 8px;
-    background: transparent;
-    color: var(--b3-text-color-secondary);
-    font-size: 15px;
-    line-height: 1;
-    cursor: pointer;
-}
-.am-notes-focus-btn:hover {
-    background: var(--b3-list-hover, rgba(0, 0, 0, 0.06));
-    color: var(--b3-theme-on-background);
-}
-.am-form-notes-section.is-notes-focus .am-form-textarea__field,
-.am-form-notes-section.is-notes-focus textarea {
-    border-color: color-mix(in srgb, var(--am-blue) 35%, var(--b3-border-color));
-}
 /* v2.6.7：行内 Markdown（与详情卡 .am-product-notes 同口径） */
 .am-md-rendered strong { font-weight: 700; }
 .am-md-rendered em { font-style: italic; }
