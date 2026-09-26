@@ -12026,8 +12026,12 @@ closeProductCard() {
         }
         const expiryOn = projection.expiryOn || (vm.important && vm.important.date) || null;
         const subState = projection.subscription && projection.subscription.state;
-        // v2.6.7：传 kind 供徽章区分实物保修（过保）与订阅（到期）文案。
-        const badgeHtml = this._formalExpiryBadgeHtml(expiryOn, subState, asset.kind);
+        // v2.6.7 实验：提前续订侦测——订阅投影里存在 startDate 晚于今天的未来周期（latestPeriod），
+        // 即「下期已订」：卡片徽章改「已续订」（见 _formalExpiryBadgeHtml），临期「续订」按钮不再渲染。
+        // 否则刚续订完，卡片仍显示「N 天后到期 + 续订」，用户视角等于信息没更新。
+        const subProj = projection.subscription;
+        const renewedAhead = !!(subProj && subProj.latestPeriod && String(subProj.latestPeriod.startDate) > todayISO());
+        const badgeHtml = this._formalExpiryBadgeHtml(expiryOn, subState, asset.kind, renewedAhead);
         // 需求5：状态点派生 retired > expired > active。过期判定复用上方 expiryOn（projection.expiryOn 或
         // vm.important 兜底——实物 projection.expiryOn 恒为 null，其保修截止日经 getFormalNextImportantDate
         // 的 warranty 兜底进入 expiryOn）。
@@ -12057,7 +12061,7 @@ closeProductCard() {
         const cnyApproxHtml = approxRaw ? '<span class="am-cny-approx">' + escapeHtml(approxRaw) + '</span>' : '';
         // R2 项1：预付卡右下角「N 天后到期」已移除（标题行到期徽章已覆盖该信息），
         // prepaidDaysLeft 计算与返回字段一并清理。
-        return { vm, projection, isWishlist, group, groupLabel, value, remainingCount, perUseAmountMinor, balanceAmountMinor, dailyMinor, dailyBasis, expiryOn, subState, badgeHtml, dotState, tagsHtml, showRenew, coverHtml, categoryId, cnyApproxHtml, costGoal: (!isWishlist && projection.costGoal) ? projection.costGoal : null };
+        return { vm, projection, isWishlist, group, groupLabel, value, remainingCount, perUseAmountMinor, balanceAmountMinor, dailyMinor, dailyBasis, expiryOn, subState, renewedAhead, badgeHtml, dotState, tagsHtml, showRenew, coverHtml, categoryId, cnyApproxHtml, costGoal: (!isWishlist && projection.costGoal) ? projection.costGoal : null };
     }
 
     /** 到期徽章（列表/矩阵卡内联兜底，算法等价 concat.js 解构的 formatRemainingBadge）。无到期 / 非法日期返回空串。
@@ -12065,11 +12069,16 @@ closeProductCard() {
      *  v2.6.6：过期档（daysLeft<0 或订阅投影 state=expired）改渲染灰色「已过期」徽章（过期=退役口径，卡上需可见标识），配合首页「已退役」分组。
      *  v2.6.7：实物保修到期（kind=physical，保修日经 important 兜底进 expiryOn）改用「过保」措辞
      *  （今日过保 / N 天后过保），与订阅的「到期」文案区分；过期档实物同样改「已过保」，
-     *  订阅维持「已过期」。 */
-    _formalExpiryBadgeHtml(expiryOn, subState, kind) {
+     *  订阅维持「已过期」。
+     *  v2.6.7 实验：renewedAhead（订阅存在未来周期，即已提前续订下期）→ 绿色「已续订」徽章
+     *  替代「N 天后到期」——当期虽未结束，但按旧口径显示临期 + 续订按钮会让用户以为没续上。 */
+    _formalExpiryBadgeHtml(expiryOn, subState, kind, renewedAhead) {
         if (!expiryOn) return '';
         if (subState === 'pendingConfirmation') {
             return `<span class="am-card-badge am-card-badge--soon">${escapeHtml(this._t('badgePendingRenewal', '待续订'))}</span>`;
+        }
+        if (renewedAhead) {
+            return `<span class="am-card-badge am-card-badge--renewed">${escapeHtml(this._t('badgeRenewed', '已续订'))}</span>`;
         }
         const daysLeft = daysUntil(expiryOn, todayISO());
         if (!Number.isFinite(daysLeft)) return '';
@@ -12144,10 +12153,11 @@ closeProductCard() {
                 bottomRightHtml = `<button type="button" class="am-card-renew am-card-renew--muted" data-action="card-renew" data-id="${escapeHtml(asset.id)}">${escapeHtml(this._t('subscriptionResubscribe', '再次订阅'))}</button>`;
             }
         } else if (kind === FORMAL_ASSET_KIND.VIRTUAL_SUBSCRIPTION
-            && data.subState !== 'pendingConfirmation' && data.subState !== 'expired') {
+            && data.subState !== 'pendingConfirmation' && data.subState !== 'expired' && !data.renewedAhead) {
             // v2.6.7 实验（experiment/card-chips-subline）：在役订阅临期（剩余 ≤30 天，与「即将到期」
             // 黄色档同口径）在卡片右下角直接给「续订」——复用 card-renew 链路打开续期 sheet
             // （预填 endDate+1，提前续订从当期结束日顺延，不损失天数）。按钮跟随主题色（同「目标 · 还需 N 天」）。
+            // 已提前续订（renewedAhead，下期已订）不再渲染，避免重复续订入口。
             const renewDaysLeft = data.expiryOn ? daysUntil(data.expiryOn, todayISO()) : null;
             if (renewDaysLeft != null && Number.isFinite(renewDaysLeft) && renewDaysLeft >= 0 && renewDaysLeft <= 30) {
                 bottomRightHtml = `<button type="button" class="am-card-renew am-card-renew--accent" data-action="card-renew" data-id="${escapeHtml(asset.id)}">${escapeHtml(this._t('subscriptionRenew', '续订'))}</button>`;

@@ -12734,6 +12734,8 @@
 .am-card-badge--soon { background: rgba(230, 162, 60, 0.16); color: var(--am-orange); }
 .am-card-badge--normal { background: color-mix(in srgb, var(--am-blue) 12%, transparent); color: var(--am-blue); }
 .am-card-badge--permanent { background: rgba(103, 194, 58, 0.14); color: var(--am-green); }
+/* v2.6.7 实验：已提前续订（存在未来周期）→ 绿色「已续订」徽章，替代「N 天后到期」临期口径 */
+.am-card-badge--renewed { background: rgba(103, 194, 58, 0.14); color: var(--am-green); }
 
 /* ============================================
  * v2.6.6：首页「已退役」分割线 —— 非退役产品与退役产品（含过期订阅）之间的
