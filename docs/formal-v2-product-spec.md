@@ -500,10 +500,10 @@ if (raw.schemaGeneration !== 'formal-v2' || raw.schemaVersion !== 1) {
 ### 9.2 主空间部署（仅覆盖 4 个文件）
 
 ```powershell
-Copy-Item -LiteralPath "index.js" -Destination "D:/SiYuan/data/plugins/siyuan-plugin-asset-management/index.js"
-Copy-Item -LiteralPath "index.css" -Destination "D:/SiYuan/data/plugins/siyuan-plugin-asset-management/index.css"
-Copy-Item -LiteralPath "i18n/zh_CN.json" -Destination "D:/SiYuan/data/plugins/siyuan-plugin-asset-management/i18n/zh_CN.json"
-Copy-Item -LiteralPath "i18n/en_US.json" -Destination "D:/SiYuan/data/plugins/siyuan-plugin-asset-management/i18n/en_US.json"
+Copy-Item -LiteralPath "index.js" -Destination "<SiYuan>/data/plugins/siyuan-plugin-asset-management/index.js"
+Copy-Item -LiteralPath "index.css" -Destination "<SiYuan>/data/plugins/siyuan-plugin-asset-management/index.css"
+Copy-Item -LiteralPath "i18n/zh_CN.json" -Destination "<SiYuan>/data/plugins/siyuan-plugin-asset-management/i18n/zh_CN.json"
+Copy-Item -LiteralPath "i18n/en_US.json" -Destination "<SiYuan>/data/plugins/siyuan-plugin-asset-management/i18n/en_US.json"
 ```
 
 - **不**覆盖 `plugin.json`（除非单独需要改版本号）。
@@ -860,7 +860,7 @@ Copy-Item -LiteralPath "i18n/en_US.json" -Destination "D:/SiYuan/data/plugins/si
 **目标**：执行 §9 部署流程；在主空间跑 §9.4 smoke。
 
 **允许修改的文件**：
-- 主空间 `D:/SiYuan/data/plugins/siyuan-plugin-asset-management/{index.js,index.css,i18n/zh_CN.json,i18n/en_US.json}`
+- 主空间 `<SiYuan>/data/plugins/siyuan-plugin-asset-management/{index.js,index.css,i18n/zh_CN.json,i18n/en_US.json}`
 - 用户思源笔记中的 JSON 备份文件（下载到本地，不入 git）
 
 **禁止修改的文件**：
@@ -875,10 +875,10 @@ Copy-Item -LiteralPath "i18n/en_US.json" -Destination "D:/SiYuan/data/plugins/si
 - 用户按 §9.4 smoke 14 步全部通过。
 
 **验证命令**：
-- PowerShell：`Copy-Item -LiteralPath "index.js" -Destination "D:/SiYuan/data/plugins/siyuan-plugin-asset-management/index.js"`
-- PowerShell：`Copy-Item -LiteralPath "index.css" -Destination "D:/SiYuan/data/plugins/siyuan-plugin-asset-management/index.css"`
-- PowerShell：`Copy-Item -LiteralPath "i18n/zh_CN.json" -Destination "D:/SiYuan/data/plugins/siyuan-plugin-asset-management/i18n/zh_CN.json"`
-- PowerShell：`Copy-Item -LiteralPath "i18n/en_US.json" -Destination "D:/SiYuan/data/plugins/siyuan-plugin-asset-management/i18n/en_US.json"`
+- PowerShell：`Copy-Item -LiteralPath "index.js" -Destination "<SiYuan>/data/plugins/siyuan-plugin-asset-management/index.js"`
+- PowerShell：`Copy-Item -LiteralPath "index.css" -Destination "<SiYuan>/data/plugins/siyuan-plugin-asset-management/index.css"`
+- PowerShell：`Copy-Item -LiteralPath "i18n/zh_CN.json" -Destination "<SiYuan>/data/plugins/siyuan-plugin-asset-management/i18n/zh_CN.json"`
+- PowerShell：`Copy-Item -LiteralPath "i18n/en_US.json" -Destination "<SiYuan>/data/plugins/siyuan-plugin-asset-management/i18n/en_US.json"`
 - 思源 UI 操作（人工 smoke）
 
 **期望产物**：主空间插件运行在 v2；旧 v1 数据被 fail-closed 拦截；smoke 14 步全过；进入 v0.18.0 维护期。
