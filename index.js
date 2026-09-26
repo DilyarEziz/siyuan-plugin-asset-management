@@ -16246,12 +16246,10 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
 
         // 点击渲染区域 → 进入编辑，并把光标定位到点击处（v2.6.7 实验：点击定位输入）
         const onRenderedClick = (event) => {
-            wrapper.classList.add('is-editing');
-            textarea.focus();
+            // 顺序关键：必须趁渲染层还可见时先用点击坐标拿渲染 DOM 位置；
+            // 一旦切到编辑态（rendered 隐藏），caretRangeFromPoint 会命中别处导致定位失效
+            let position = null;
             try {
-                // caretRangeFromPoint/caretPositionFromPoint 拿到点击处的渲染 DOM 位置，
-                // 折算成渲染文本偏移，再经行映射表换算回原始 Markdown 偏移。
-                let position = null;
                 if (document.caretRangeFromPoint) {
                     const range = document.caretRangeFromPoint(event.clientX, event.clientY);
                     if (range && rendered.contains(range.startContainer)) {
@@ -16263,15 +16261,20 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
                         position = { node: pos.offsetNode, offset: pos.offset };
                     }
                 }
-                if (position) {
+            } catch (_) { /* 定位属体验增强，失败则落到默认光标位置 */ }
+            wrapper.classList.add('is-editing');
+            if (position) {
+                try {
+                    // 先设光标再 focus：focus 的自动滚动目标就是点击处，界面不会跳顶
                     const renderedOffset = this._mdCaretOffsetInRendered(rendered, position.node, position.offset);
                     const entries = this._buildNotesLineMap(textarea.value);
                     const rawOffset = this._mdNotesOffsetFromRendered(entries, renderedOffset);
                     if (rawOffset != null && typeof textarea.setSelectionRange === 'function') {
                         textarea.setSelectionRange(rawOffset, rawOffset);
                     }
-                }
-            } catch (_) { /* 定位属体验增强，失败则落到默认光标位置 */ }
+                } catch (_) { /* 定位属体验增强，失败则落到默认光标位置 */ }
+            }
+            textarea.focus();
             // v1.4.0：textarea 在查看态 display:none，scrollHeight 不可靠；切回编辑态变可见后
             // 必须重算 autoGrow，否则高度停留在窄值（"编辑态边框比查看态窄"的根因）。
             autoGrow();
