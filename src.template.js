@@ -8275,14 +8275,25 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
                     document.body.appendChild(mirror);
                 }
                 const ts = window.getComputedStyle(textarea);
+                // 逐项复制 longhand 字体属性：font 简写在部分内核赋值会静默失败，
+                // 镜像字体与 textarea 不一致时中文长段落换行数漂移，光标 Y 累计失准
                 const ms = mirror.style;
                 ms.width = textarea.clientWidth + 'px';
-                ms.font = ts.font;
+                ms.fontFamily = ts.fontFamily;
+                ms.fontSize = ts.fontSize;
+                ms.fontWeight = ts.fontWeight;
+                ms.fontStyle = ts.fontStyle;
                 ms.lineHeight = ts.lineHeight;
+                ms.letterSpacing = ts.letterSpacing;
+                ms.wordSpacing = ts.wordSpacing;
+                ms.textIndent = ts.textIndent;
                 ms.padding = ts.padding;
                 ms.border = ts.border;
                 ms.boxSizing = ts.boxSizing;
-                ms.letterSpacing = ts.letterSpacing;
+                ms.whiteSpace = ts.whiteSpace;
+                ms.overflowWrap = ts.overflowWrap;
+                ms.wordBreak = ts.wordBreak;
+                ms.tabSize = ts.tabSize;
                 const caret = textarea.selectionStart == null ? textarea.value.length : textarea.selectionStart;
                 // 追加零宽字符：光标在行尾换行符之后时强制渲染出新行，高度测量才包含它
                 mirror.textContent = String(textarea.value).slice(0, caret) + '\u200b';
@@ -8298,19 +8309,24 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
                 const visibleTop = scrollerRect.top;
                 const visibleBottom = scrollerRect.bottom - reserve;
                 if (caretViewportY > visibleBottom) {
-                    scroller.scrollTop += caretViewportY - visibleBottom + lineHeight;
+                    scroller.scrollTop += Math.min(caretViewportY - visibleBottom + lineHeight, 240);
                 } else if (caretViewportY < visibleTop) {
-                    scroller.scrollTop -= visibleTop - caretViewportY + lineHeight;
+                    scroller.scrollTop -= Math.min(visibleTop - caretViewportY + lineHeight, 240);
                 }
             } catch (_) { /* 光标跟随属体验增强，失败不影响输入 */ }
         };
-        const autoGrow = () => {
+        const autoGrow = (skipCaret) => {
             textarea.style.height = 'auto';
             const contentHeight = textarea.scrollHeight || 0;
             textarea.style.height = contentHeight + 'px';
-            followCaret();
+            if (!skipCaret) followCaret();
         };
-        textarea.addEventListener('input', autoGrow);
+        // 中文输入法组词过程中跳过光标跟随：系统候选词处理已在保持光标可见，
+        // 此期间再滚动会与输入法互相打架；组词结束（compositionend）后补一次跟随
+        const onNotesInput = (event) => { autoGrow(!!(event && event.isComposing)); };
+        const onNotesCompositionEnd = () => followCaret();
+        textarea.addEventListener('input', onNotesInput);
+        textarea.addEventListener('compositionend', onNotesCompositionEnd);
         autoGrow(); // 初始化（覆盖预填内容）
 
         const onKeyDown = e => {
@@ -8401,7 +8417,8 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
 
         return {
             destroy() {
-                textarea.removeEventListener('input', autoGrow);
+                textarea.removeEventListener('input', onNotesInput);
+                textarea.removeEventListener('compositionend', onNotesCompositionEnd);
                 textarea.removeEventListener('keydown', onKeyDown);
                 rendered.removeEventListener('click', onRenderedClick);
                 textarea.removeEventListener('blur', onTextareaBlur);
