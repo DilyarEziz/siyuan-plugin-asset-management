@@ -2957,7 +2957,9 @@ function buildFormalReport(snapshot, filterInput, options) {
             }
         }
 
-        const expiry = formalRiskEntry(card, card.nextImportant && card.nextImportant.date, reference);
+        const renewedAhead = !!(card.subscription && card.subscription.latestPeriod
+            && String(card.subscription.latestPeriod.startDate) > dayKey(reference));
+        const expiry = renewedAhead ? null : formalRiskEntry(card, card.nextImportant && card.nextImportant.date, reference);
         if (expiry) {
             if (expiry.daysRemaining < 0) report.risks.expiry.expired.push(expiry);
             else if (expiry.daysRemaining <= 30) {

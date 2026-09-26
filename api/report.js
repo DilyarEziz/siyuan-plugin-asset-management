@@ -576,7 +576,11 @@ function buildFormalReport(snapshot, filterInput, options) {
             }
         }
 
-        const expiry = formalRiskEntry(card, card.nextImportant && card.nextImportant.date, reference);
+        // v2.6.7 实验：已提前续订（订阅存在 startDate 晚于今天的未来周期）不再进到期风险列表——
+        // 当期虽未结束，但下期已订，首页到期提醒 / 报表「即将到期」不应重复催续。
+        const renewedAhead = !!(card.subscription && card.subscription.latestPeriod
+            && String(card.subscription.latestPeriod.startDate) > dayKey(reference));
+        const expiry = renewedAhead ? null : formalRiskEntry(card, card.nextImportant && card.nextImportant.date, reference);
         if (expiry) {
             if (expiry.daysRemaining < 0) report.risks.expiry.expired.push(expiry);
             else if (expiry.daysRemaining <= 30) {
