@@ -16262,6 +16262,10 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
                     }
                 }
             } catch (_) { /* 定位属体验增强，失败则落到默认光标位置 */ }
+            // 记录点击前的滚动位置：textarea 与渲染视图内容等高，编辑态还原同一滚动量
+            // 即可做到「界面纹丝不动，光标就落在点击处」
+            const scroller = getNotesScroller();
+            const prevScroll = scroller ? scroller.scrollTop : 0;
             wrapper.classList.add('is-editing');
             if (position) {
                 try {
@@ -16274,7 +16278,14 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
                     }
                 } catch (_) { /* 定位属体验增强，失败则落到默认光标位置 */ }
             }
-            textarea.focus();
+            // preventScroll 阻止 focus 把高 textarea 顶部对齐视口（卡片瞬移的元凶），
+            // 不支持该参数的旧内核忽略后由下方 scrollTop 还原兜底
+            try {
+                textarea.focus({ preventScroll: true });
+            } catch (_) {
+                textarea.focus();
+            }
+            if (scroller) scroller.scrollTop = prevScroll;
             // v1.4.0：textarea 在查看态 display:none，scrollHeight 不可靠；切回编辑态变可见后
             // 必须重算 autoGrow，否则高度停留在窄值（"编辑态边框比查看态窄"的根因）。
             autoGrow();
@@ -16298,16 +16309,21 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
         //   - 专注模式下 textarea 由 flex 拉满，跳过内容撑高
         //   - followCaret 光标跟随：浮底保存按钮会盖住表单末尾内容，光标行进入按钮区时
         //     自动滚动滚动容器，让光标行始终保持在按钮上方；镜像 div 测量光标 Y（含软换行）
+        // v2.6.7 实验：光标跟随与点击定位共用的滚动容器查找
         let mirror = null;
+        const getNotesScroller = () => {
+            let node = textarea.parentNode;
+            while (node && node.nodeType === 1) {
+                const oy = window.getComputedStyle(node).overflowY;
+                if (oy === 'auto' || oy === 'scroll') return node;
+                node = node.parentNode;
+            }
+            return null;
+        };
         const followCaret = () => {
             try {
-                let scroller = textarea.parentNode;
-                while (scroller && scroller.nodeType === 1) {
-                    const oy = window.getComputedStyle(scroller).overflowY;
-                    if (oy === 'auto' || oy === 'scroll') break;
-                    scroller = scroller.parentNode;
-                }
-                if (!scroller || scroller.nodeType !== 1) return;
+                const scroller = getNotesScroller();
+                if (!scroller) return;
                 const shell = typeof textarea.closest === 'function' ? textarea.closest('.am-form-shell') : null;
                 const footer = shell ? shell.querySelector('.am-form-shell__footer') : null;
                 const reserve = footer ? footer.offsetHeight + 12 : 24;
