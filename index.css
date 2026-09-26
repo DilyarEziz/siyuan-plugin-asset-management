@@ -12677,6 +12677,17 @@
 /* 名称行：名称占满剩余宽度，状态点 + 到期徽章紧贴名称，菜单固定右侧 */
 .am-asset-item__headline .am-asset-item__name { flex: 1; min-width: 0; }
 
+/* v2.6.7 实验（experiment/card-chips-subline）：名称下方独立 chip 行——
+   类型 chip + 到期徽章移出标题行，标题行整行让给名称（长名称不再被挤压截断），
+   价格 meta 行自然下移到本行之下。矩阵视图徽章仍在封面旁，本行仅类型 chip。 */
+.am-asset-item__subline {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+}
+
 /* 类型 chip（displayGroup 三组着色：实物蓝 / 虚拟紫 / 预付橙） */
 .am-card-typechip {
     display: inline-flex;

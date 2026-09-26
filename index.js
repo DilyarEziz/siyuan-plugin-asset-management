@@ -20034,6 +20034,9 @@ closeProductCard() {
             }
         }
         // 需求5：类型 chip 移入标题行（紧跟状态点，即原「已过期」徽章位）；标签留在 meta 行右对齐，无标签不渲染空容器。
+        // v2.6.7 实验（experiment/card-chips-subline）：类型 chip + 到期徽章移出名称行，放到名称下方
+        // 独立 subline——标题行整行让给名称，长名称不再被 chip / 徽章 / 菜单挤压成省略号；
+        // 价格 meta 行随之自然下移到 subline 之下。矩阵视图 badge 仍在封面旁（nameBadge=''），subline 仅类型 chip。
         const typechipHtml = `<span class="am-card-typechip am-card-typechip--${escapeHtml(data.group)}">${escapeHtml(data.groupLabel)}</span>`;
         const tagsHtml = data.tagsHtml ? `<div class="am-asset-item__tags">${data.tagsHtml}</div>` : '';
         // v1.5.0：矩阵视图徽章改放封面右侧空白区（coverwrap = 封面 + 徽章横向并排），标签移到该行
@@ -20047,12 +20050,14 @@ closeProductCard() {
         const nameBadge = matrix ? '' : data.badgeHtml;
         const topTags = matrix ? tagsHtml : '';
         const metaTags = matrix ? '' : tagsHtml;
+        const sublineHtml = `<div class="am-asset-item__subline">${typechipHtml}${nameBadge}</div>`;
         return `<div class="${rootCls} am-formal-card am-asset-item--category-${escapeHtml(data.categoryId)}" data-id="${escapeHtml(asset.id)}" data-asset-card-id="${escapeHtml(asset.id)}" data-action="card">`
             + `<div class="am-asset-item__top">`
             + coverBlock
             + topTags
             + `<div class="am-asset-item__main">`
-            + `<div class="am-asset-item__headline"><div class="am-asset-item__name"><span>${escapeHtml(asset.name)}</span><span class="am-dot am-dot--${escapeHtml(data.dotState)}"></span>${typechipHtml}${nameBadge}</div><button class="am-asset-item__menu" data-action="item-menu" data-id="${escapeHtml(asset.id)}">•••</button></div>`
+            + `<div class="am-asset-item__headline"><div class="am-asset-item__name"><span>${escapeHtml(asset.name)}</span><span class="am-dot am-dot--${escapeHtml(data.dotState)}"></span></div><button class="am-asset-item__menu" data-action="item-menu" data-id="${escapeHtml(asset.id)}">•••</button></div>`
+            + sublineHtml
             + `<div class="am-asset-item__meta"><div class="am-asset-item__price"><span>${escapeHtml(this._t('productCostPrice', '价格'))}</span>${data.value}${data.cnyApproxHtml}</div>${metaTags}</div>`
             + `</div>`
             + `</div>`
