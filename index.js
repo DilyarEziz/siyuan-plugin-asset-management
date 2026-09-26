@@ -16381,9 +16381,23 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
             } catch (_) { /* 光标跟随属体验增强，失败不影响输入 */ }
         };
         const autoGrow = (skipCaret) => {
+            // 关键：height:auto 测量的瞬间 textarea 会塌缩成 rows 高度，表单内容骤然变短，
+            // 浏览器会把滚动容器的 scrollTop 钳制到新的最大值——滚动越深被砍越多，
+            // 恢复高度后也不会回来，表现为「一输入界面就跳顶」。先记后还，全程同步无渲染。
+            let scroller = null;
+            let prevScroll = 0;
+            try {
+                scroller = getNotesScroller();
+                prevScroll = scroller ? scroller.scrollTop : 0;
+            } catch (_) {
+                scroller = null;
+            }
             textarea.style.height = 'auto';
             const contentHeight = textarea.scrollHeight || 0;
             textarea.style.height = contentHeight + 'px';
+            try {
+                if (scroller) scroller.scrollTop = prevScroll;
+            } catch (_) { /* 还原失败不影响输入 */ }
             if (!skipCaret) followCaret();
         };
         // 中文输入法组词过程中跳过光标跟随：系统候选词处理已在保持光标可见，
