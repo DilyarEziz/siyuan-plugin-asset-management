@@ -12169,7 +12169,7 @@ closeProductCard() {
             + `<div class="am-asset-item__main">`
             + `<div class="am-asset-item__headline"><div class="am-asset-item__name"><span>${escapeHtml(asset.name)}</span><span class="am-dot am-dot--${escapeHtml(data.dotState)}"></span></div><button class="am-asset-item__menu" data-action="item-menu" data-id="${escapeHtml(asset.id)}">•••</button></div>`
             + sublineHtml
-            + `<div class="am-asset-item__meta"><div class="am-asset-item__price"><span>${escapeHtml(this._t('productCostPrice', '价格'))}</span>${data.value}${data.cnyApproxHtml}</div>${metaTags}</div>`
+            + `<div class="am-asset-item__meta"><div class="am-asset-item__price">${data.value}${data.cnyApproxHtml}</div>${metaTags}</div>`
             + `</div>`
             + `</div>`
             + `<div class="am-asset-item__divider"></div>`
