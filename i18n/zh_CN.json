@@ -367,6 +367,7 @@
   "subscriptionRenewalNoLongerPending": "该订阅当前无需确认续费",
   "subscriptionConfirmRenewalSuccess": "已确认续费",
   "subscriptionResubscribe": "再次订阅",
+  "subscriptionRenew": "续订",
   "subscriptionResubscribeTitle": "再次订阅",
   "subscriptionResubscribeHint": "将保留原资产，并把已结束订阅期归档后从所选日期重新开始。",
   "subscriptionEndDateBeforeStart": "结束日期不能早于开始日期",

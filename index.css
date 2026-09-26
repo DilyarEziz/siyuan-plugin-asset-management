@@ -12795,6 +12795,25 @@
     border-color: var(--am-gray);
 }
 .am-card-renew--ghost:hover { background: rgba(144, 147, 153, 0.10); }
+/* v2.6.7 实验：已过期「再次订阅」弱化——颜色与「日均」label 同为次要文字色，不与临期「续订」抢视觉 */
+.am-card-renew--muted {
+    color: var(--b3-text-color-secondary);
+    border-color: color-mix(in srgb, var(--b3-text-color-secondary) 45%, transparent);
+}
+.am-card-renew--muted:hover { background: rgba(144, 147, 153, 0.10); }
+/* v2.6.7 实验：临期「续订」——跟随主题色（与卡片「目标 · 还需 N 天」文字同色） */
+.am-card-renew--accent {
+    color: var(--am-blue);
+    border-color: color-mix(in srgb, var(--am-blue) 55%, transparent);
+}
+.am-card-renew--accent:hover { background: color-mix(in srgb, var(--am-blue) 10%, transparent); }
+.b3-theme-dark .am-card-renew--accent,
+[data-theme-mode="dark"] .am-card-renew--accent {
+    color: var(--am-blue-2);
+    border-color: color-mix(in srgb, var(--am-blue-2) 55%, transparent);
+}
+.b3-theme-dark .am-card-renew--accent:hover,
+[data-theme-mode="dark"] .am-card-renew--accent:hover { background: color-mix(in srgb, var(--am-blue-2) 12%, transparent); }
 
 /* v2.4.2 修订（hotfix 3）：价格曲线作为 .am-asset-item__meta 的最后一个子元素，
    通过 margin-left:auto 推至该行最右——与 meta 自带 space-between 布局正交，

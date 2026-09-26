@@ -20025,12 +20025,21 @@ closeProductCard() {
         } else if (data.showRenew) {
             // 需求3（D4/D5）按钮分流：
             //   - pendingConfirmation（开自动续费到期未确认）→ 主「确认续订」(card-renew→openRenewSheet 预填 endDate+1) + 次「不再续订」(card-no-renew→关自动续费转 expired)
-            //   - expired（未开自动续费过期）→ 「再次订阅」(card-renew→openRenewSheet)
+            //   - expired（未开自动续费过期）→ 「再次订阅」(--muted 弱化，v2.6.7 实验：与「日均」label 同为次要色，不抢视觉)
             if (data.subState === 'pendingConfirmation') {
                 bottomRightHtml = `<button type="button" class="am-card-renew" data-action="card-renew" data-id="${escapeHtml(asset.id)}">${escapeHtml(this._t('subscriptionConfirmRenewal', '确认续订'))}</button>`
                     + `<button type="button" class="am-card-renew am-card-renew--ghost" data-action="card-no-renew" data-id="${escapeHtml(asset.id)}">${escapeHtml(this._t('subscriptionStopRenewal', '不再续订'))}</button>`;
             } else {
-                bottomRightHtml = `<button type="button" class="am-card-renew" data-action="card-renew" data-id="${escapeHtml(asset.id)}">${escapeHtml(this._t('subscriptionResubscribe', '再次订阅'))}</button>`;
+                bottomRightHtml = `<button type="button" class="am-card-renew am-card-renew--muted" data-action="card-renew" data-id="${escapeHtml(asset.id)}">${escapeHtml(this._t('subscriptionResubscribe', '再次订阅'))}</button>`;
+            }
+        } else if (kind === FORMAL_ASSET_KIND.VIRTUAL_SUBSCRIPTION
+            && data.subState !== 'pendingConfirmation' && data.subState !== 'expired') {
+            // v2.6.7 实验（experiment/card-chips-subline）：在役订阅临期（剩余 ≤30 天，与「即将到期」
+            // 黄色档同口径）在卡片右下角直接给「续订」——复用 card-renew 链路打开续期 sheet
+            // （预填 endDate+1，提前续订从当期结束日顺延，不损失天数）。按钮跟随主题色（同「目标 · 还需 N 天」）。
+            const renewDaysLeft = data.expiryOn ? daysUntil(data.expiryOn, todayISO()) : null;
+            if (renewDaysLeft != null && Number.isFinite(renewDaysLeft) && renewDaysLeft >= 0 && renewDaysLeft <= 30) {
+                bottomRightHtml = `<button type="button" class="am-card-renew am-card-renew--accent" data-action="card-renew" data-id="${escapeHtml(asset.id)}">${escapeHtml(this._t('subscriptionRenew', '续订'))}</button>`;
             }
         }
         // 需求5：类型 chip 移入标题行（紧跟状态点，即原「已过期」徽章位）；标签留在 meta 行右对齐，无标签不渲染空容器。
