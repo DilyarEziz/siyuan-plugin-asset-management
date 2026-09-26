@@ -417,12 +417,33 @@ async function main() {
         assert.equal(fireKey({ code: 'KeyB', ctrlKey: true, altKey: true, shiftKey: false }), false, 'Cmd+Option+B (heading tier combo) is not intercepted');
         assert.equal(ta.value, '# plain heading line', 'heading combo leaves the value untouched');
 
-        // D3) 备注输入框渲染快捷键提示行；销毁后随 wrapper 移除
-        const hint = ta.parentNode.querySelector('[data-md-shortcut-hint]');
-        assert.ok(hint, 'notes textarea shows the shortcut hint line');
-        assert.match(hint.textContent, /Ctrl\+B/, 'hint lists the bold shortcut');
+        // D3) 快捷键提示已完整移除；备注 section 获得专注模式按钮并可来回切换
+        assert.equal(ta.parentNode.querySelector('[data-md-shortcut-hint]'), null, 'shortcut hint line is fully removed');
+
+        const sec = doc8.createElement('section');
+        sec.className = 'am-form-section am-form-notes-section';
+        const title = doc8.createElement('div');
+        title.className = 'am-form-section__title';
+        sec.appendChild(title);
+        const taNotes = doc8.createElement('textarea');
+        taNotes.setAttribute('name', 'notes');
+        sec.appendChild(taNotes);
+        doc8.body.appendChild(sec);
+        const bindingNotes = p8._bindMarkdownTextarea(taNotes);
+        const focusBtn = sec.querySelector('[data-notes-focus]');
+        assert.ok(focusBtn, 'notes section gets the focus toggle button');
+        assert.equal(focusBtn.textContent, '⤢', 'focus button starts collapsed');
+        focusBtn.onclick();
+        assert.ok(sec.classList.contains('is-notes-focus'), 'focus mode toggles on');
+        assert.equal(focusBtn.textContent, '⤡', 'focus button switches to collapse glyph');
+        focusBtn.onclick();
+        assert.equal(sec.classList.contains('is-notes-focus'), false, 'focus mode toggles back off');
+        assert.equal(focusBtn.textContent, '⤢', 'focus button restores expand glyph');
+        bindingNotes.destroy();
+        assert.equal(sec.querySelector('[data-notes-focus]'), null, 'destroy removes the focus button');
+        assert.equal(sec.classList.contains('is-notes-focus'), false, 'destroy clears focus state');
         binding.destroy();
-        assert.equal(doc8.querySelector('[data-md-shortcut-hint]'), null, 'destroy removes the hint with the wrapper');
+        assert.equal(doc8.querySelector('[data-md-shortcut-hint]'), null, 'destroy leaves no hint residue');
     }
 
     // ===== Part C: 表单保存路径不回归 =====

@@ -9,7 +9,9 @@
 **过保措辞收口、备注支持加粗、详情卡文字可选中**
 
 - 新增：备注支持行内 Markdown——加粗 `**文字**`、斜体 `*文字*`、下划线 `++文字++`、删除线 `~~文字~~`、行内代码，产品详情卡与编辑表单预览同步渲染；保存的原文不变，HTML 会被安全转义，放心粘贴。
-- 新增：备注编辑支持思源同款快捷键——⌘/Ctrl+B 加粗、⌘/Ctrl+I 斜体、⌘/Ctrl+U 下划线、⌘/Ctrl+Shift+S 删除线、⌘/Ctrl+Shift+K 行内代码：选中文字一键包裹标记，再按一次取消；无选中则插入空标记直接续写。备注输入框下方常驻快捷键提示。
+- 新增：备注编辑支持思源同款快捷键——⌘/Ctrl+B 加粗、⌘/Ctrl+I 斜体、⌘/Ctrl+U 下划线、⌘/Ctrl+Shift+S 删除线、⌘/Ctrl+Shift+K 行内代码：选中文字一键包裹标记，再按一次取消；无选中则插入空标记直接续写。
+- 新增：备注专注模式——点击备注卡片右上角的展开按钮，备注编辑区即扩展覆盖整个表单，专心编辑长备注；再点收起恢复原位。
+- 修复：备注编辑时光标移到表单底部会被悬浮的保存按钮遮挡——现在光标行会自动保持在按钮上方的可视区域。
 - 改进：产品详情卡里的备注等文字现在可以拖动选中复制了——思源面板默认禁止选中文字，详情卡已显式放开；拖选时手一滑松开到卡片外也不会再误关详情卡。
 - 改进：保修与订阅的到期提醒彻底分开——实物保修临期显示「即将过保」（订阅仍显示日期 / 「N 天内到期」），首页到期提醒和报表「即将到期」同步生效；保修当天显示「今日过保」，详情卡保修块同步改用这组措辞。
 - 改进：实物产品保修到期后显示「已过保」，不再误显订阅口径的「已过期」；列表与矩阵卡片同步。
@@ -331,7 +333,9 @@
 **Consistent out-of-warranty wording, bold notes, and selectable detail-card text**
 
 - New: asset notes now support inline Markdown — bold `**text**`, italic `*text*`, underline `++text++`, strikethrough `~~text~~`, and inline code render in both the product detail card and the edit-form preview; the saved source text is untouched and HTML is safely escaped.
-- New: notes editing now supports SiYuan's familiar shortcuts — ⌘/Ctrl+B bold, ⌘/Ctrl+I italic, ⌘/Ctrl+U underline, ⌘/Ctrl+Shift+S strikethrough, ⌘/Ctrl+Shift+K inline code. Select text and press once to wrap it, press again to unwrap; with no selection an empty pair is inserted for typing. A shortcut hint stays below the notes field.
+- New: notes editing now supports SiYuan's familiar shortcuts — ⌘/Ctrl+B bold, ⌘/Ctrl+I italic, ⌘/Ctrl+U underline, ⌘/Ctrl+Shift+S strikethrough, ⌘/Ctrl+Shift+K inline code. Select text and press once to wrap it, press again to unwrap; with no selection an empty pair is inserted for typing.
+- New: notes focus mode — click the expand button at the top-right of the notes card and the editor expands to cover the whole form for distraction-free long notes; click again to collapse.
+- Fixed: while typing notes the caret line could hide behind the floating save button — the editor now keeps the caret line visible above it.
 - Improved: text in the product detail card (including notes) can now be drag-selected and copied — SiYuan panels disable text selection by default, and the detail card now opts back in; releasing a selection drag over the backdrop no longer closes the card by accident.
 - Improved: warranty and subscription reminders are now clearly separated — physical products nearing warranty end show "Warranty expiring soon" (subscriptions keep the date / "ends in N days" wording), consistently on the home expiry reminder and the report's expiring list; warranty due today shows "Warranty ends today", and the detail card's warranty block uses the same wording.
 - Improved: physical products past their warranty now show "Out of warranty" instead of the subscription-flavored "Expired" on list and matrix cards.

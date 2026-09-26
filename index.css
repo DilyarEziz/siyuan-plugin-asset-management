@@ -3569,15 +3569,54 @@
     padding-left: 20px;
 }
 .am-md-rendered li { margin: 1px 0; }
-/* v2.6.7：备注输入框下方行内快捷键提示（仅资产备注 textarea 渲染，见 _bindMarkdownTextarea） */
-.am-md-shortcut-hint {
-    margin-top: 4px;
-    font-size: 11px;
-    line-height: 1.5;
-    text-align: left;
-    color: var(--b3-text-color-secondary, rgba(0, 0, 0, 0.5));
-    user-select: none;
-    -webkit-user-select: none;
+/* v2.6.7 实验（notes-editor-upgrade）：备注专注模式——
+   右上角展开按钮 + section 覆盖整个表单壳（保存按钮 z-index 3 在其上仍可点）。
+   专注模式下 textarea 由 flex 拉满（autoGrow 跳过内容撑高）。 */
+.am-form-notes-section { position: relative; }
+.am-notes-focus-btn {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    z-index: 2;
+    width: 26px;
+    height: 26px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--b3-text-color-secondary);
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+}
+.am-notes-focus-btn:hover {
+    background: var(--b3-list-hover, rgba(0, 0, 0, 0.06));
+    color: var(--b3-theme-on-background);
+}
+.am-form-notes-section.is-notes-focus {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    padding: 10px 20px calc(80px + env(safe-area-inset-bottom, 0));
+    background: var(--b3-theme-background);
+    overflow-y: auto;
+}
+.am-form-notes-section.is-notes-focus .am-md-editor {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+.am-form-notes-section.is-notes-focus textarea {
+    flex: 1 1 auto;
+    min-height: 45vh;
 }
 /* v2.6.7：行内 Markdown（与详情卡 .am-product-notes 同口径） */
 .am-md-rendered strong { font-weight: 700; }

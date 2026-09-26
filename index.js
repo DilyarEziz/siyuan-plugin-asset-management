@@ -28,6 +28,9 @@
  *   - 备注行内 Markdown：加粗 **x**、斜体 *x*、删除线 ~~x~~、行内代码 `x`——
  *       escape 之后单遍受控替换（详情卡备注与编辑表单预览同步支持），
  *       不支持 _x_ 下划线语法（避免误伤 snake_case），CSS 同步补 strong/em/del/code 样式
+ *   - 备注编辑：光标跟随滚动——浮底保存按钮不再遮挡光标行（镜像 div 测量光标 Y，
+ *       进入按钮区自动上滚）；专注模式——备注卡右上角展开按钮，一键把备注编辑区
+ *       扩展为覆盖整个表单的大编辑面，再点收起，保存按钮全程可点
  *
  * v2.6.6（目录删除放开 + 设置弹窗定高 + 种草历程门卫 + 首页退役分组 + 过期即退役口径）：
  *   - 品牌 / 渠道删除放开：被资产引用时不再拒绝删除，同一事务内自动把引用该项的
@@ -16230,19 +16233,31 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
         const noteSection = textarea.closest ? textarea.closest('.am-form-section') : null;
         if (noteSection) noteSection.classList.add('am-md-section');
 
-        // v2.6.7：行内样式快捷键提示（仅资产备注 textarea；退役 / 转让等小表单的
-        // Markdown 输入不加，避免视觉噪音）。键位前缀按运行平台显示 ⌘ / Ctrl。
-        if (textarea.name === 'notes' && typeof document !== 'undefined') {
+        // v2.6.7 实验（notes-editor-upgrade）：备注专属「专注模式」——卡片右上角展开按钮，
+        // 点击后备注 section 覆盖整个表单壳成为大编辑面，再点收起。仅资产备注 textarea；
+        // 退役 / 转让等小表单的 Markdown 输入不加。
+        if (textarea.name === 'notes' && noteSection && typeof document !== 'undefined') {
             try {
-                const nav = typeof navigator !== 'undefined' ? navigator : null;
-                const isMac = /Mac|iPhone|iPad/i.test(String((nav && (nav.platform || nav.userAgent)) || ''));
-                const mod = isMac ? '⌘' : 'Ctrl';
-                const hint = document.createElement('div');
-                hint.className = 'am-md-shortcut-hint';
-                hint.setAttribute('data-md-shortcut-hint', '');
-                hint.textContent = this._t('markdownShortcutHint', '{mod}+B 加粗 · {mod}+I 斜体 · {mod}+U 下划线 · {mod}+Shift+S 删除线 · {mod}+Shift+K 代码').replaceAll('{mod}', mod);
-                wrapper.appendChild(hint);
-            } catch (_) { /* 提示属纯装饰，任何环境下失败都不影响输入 */ }
+                const expandLabel = this._t('notesFocusExpand', '专注模式');
+                const collapseLabel = this._t('notesFocusCollapse', '退出专注模式');
+                const focusBtn = document.createElement('button');
+                focusBtn.type = 'button';
+                focusBtn.className = 'am-notes-focus-btn';
+                focusBtn.setAttribute('data-notes-focus', '');
+                focusBtn.textContent = '⤢';
+                focusBtn.title = expandLabel;
+                focusBtn.setAttribute('aria-label', expandLabel);
+                focusBtn.onclick = () => {
+                    const on = !noteSection.classList.contains('is-notes-focus');
+                    noteSection.classList.toggle('is-notes-focus', on);
+                    focusBtn.textContent = on ? '⤡' : '⤢';
+                    focusBtn.title = on ? collapseLabel : expandLabel;
+                    focusBtn.setAttribute('aria-label', on ? collapseLabel : expandLabel);
+                    autoGrow();
+                    if (typeof textarea.focus === 'function') textarea.focus();
+                };
+                noteSection.appendChild(focusBtn);
+            } catch (_) { /* 专注模式属体验增强，失败不影响输入 */ }
         }
 
         const renderView = () => {
@@ -16279,9 +16294,71 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
         renderView();
 
         // v1.4.0：textarea 随内容自动撑高
+        // v2.6.7 实验（notes-editor-upgrade）：
+        //   - 专注模式下 textarea 由 flex 拉满，跳过内容撑高
+        //   - followCaret 光标跟随：浮底保存按钮会盖住表单末尾内容，光标行进入按钮区时
+        //     自动滚动滚动容器，让光标行始终保持在按钮上方；镜像 div 测量光标 Y（含软换行）
+        let mirror = null;
+        const followCaret = () => {
+            try {
+                if (noteSection && noteSection.classList.contains('is-notes-focus')) return;
+                let scroller = textarea.parentNode;
+                while (scroller && scroller.nodeType === 1) {
+                    const oy = window.getComputedStyle(scroller).overflowY;
+                    if (oy === 'auto' || oy === 'scroll') break;
+                    scroller = scroller.parentNode;
+                }
+                if (!scroller || scroller.nodeType !== 1) return;
+                const shell = typeof textarea.closest === 'function' ? textarea.closest('.am-form-shell') : null;
+                const footer = shell ? shell.querySelector('.am-form-shell__footer') : null;
+                const reserve = footer ? footer.offsetHeight + 12 : 24;
+                if (!mirror) {
+                    mirror = document.createElement('div');
+                    mirror.setAttribute('aria-hidden', 'true');
+                    const init = mirror.style;
+                    init.position = 'absolute';
+                    init.top = '0';
+                    init.left = '-9999px';
+                    init.visibility = 'hidden';
+                    init.whiteSpace = 'pre-wrap';
+                    init.overflowWrap = 'anywhere';
+                    document.body.appendChild(mirror);
+                }
+                const ts = window.getComputedStyle(textarea);
+                const ms = mirror.style;
+                ms.width = textarea.clientWidth + 'px';
+                ms.font = ts.font;
+                ms.lineHeight = ts.lineHeight;
+                ms.padding = ts.padding;
+                ms.border = ts.border;
+                ms.boxSizing = ts.boxSizing;
+                ms.letterSpacing = ts.letterSpacing;
+                const caret = textarea.selectionStart == null ? textarea.value.length : textarea.selectionStart;
+                // 追加零宽字符：光标在行尾换行符之后时强制渲染出新行，高度测量才包含它
+                mirror.textContent = String(textarea.value).slice(0, caret) + '\u200b';
+                const caretYInTextarea = mirror.scrollHeight;
+                mirror.textContent = '';
+                const lineHeight = parseFloat(ts.lineHeight) || 18;
+                const scrollerRect = scroller.getBoundingClientRect();
+                const taRect = textarea.getBoundingClientRect();
+                const caretYInScroller = taRect.top + caretYInTextarea - scroller.scrollTop;
+                const visibleTop = scrollerRect.top;
+                const visibleBottom = scrollerRect.bottom - reserve;
+                if (caretYInScroller > visibleBottom) {
+                    scroller.scrollTop += caretYInScroller - visibleBottom + lineHeight;
+                } else if (caretYInScroller < visibleTop) {
+                    scroller.scrollTop -= visibleTop - caretYInScroller + lineHeight;
+                }
+            } catch (_) { /* 光标跟随属体验增强，失败不影响输入 */ }
+        };
         const autoGrow = () => {
+            if (noteSection && noteSection.classList.contains('is-notes-focus')) {
+                textarea.style.height = '100%';
+                return;
+            }
             textarea.style.height = 'auto';
             textarea.style.height = textarea.scrollHeight + 'px';
+            followCaret();
         };
         textarea.addEventListener('input', autoGrow);
         autoGrow(); // 初始化（覆盖预填内容）
@@ -16378,10 +16455,18 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
                 textarea.removeEventListener('keydown', onKeyDown);
                 rendered.removeEventListener('click', onRenderedClick);
                 textarea.removeEventListener('blur', onTextareaBlur);
+                // v2.6.7 实验：清理光标跟随用的镜像测量节点
+                if (mirror && mirror.parentNode) mirror.parentNode.removeChild(mirror);
+                mirror = null;
                 // 恢复 textarea 到 wrapper 外面
                 if (wrapper.parentNode) wrapper.parentNode.insertBefore(textarea, wrapper);
                 wrapper.remove();
-                if (noteSection) noteSection.classList.remove('am-md-section');
+                if (noteSection) {
+                    noteSection.classList.remove('am-md-section');
+                    noteSection.classList.remove('is-notes-focus');
+                    const focusBtn = noteSection.querySelector('[data-notes-focus]');
+                    if (focusBtn) focusBtn.remove();
+                }
             }
         };
     }
