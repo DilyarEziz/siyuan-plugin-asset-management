@@ -242,6 +242,47 @@ async function main() {
     assertNoActiveTokens(out18);
     assert.ok(out18.includes('&lt;img'), 'img inside li escaped');
 
+    // A19) v2.6.7 行内 Markdown：加粗 / 斜体 / 删除线 / 行内代码
+    // 加粗 **x**
+    assert.equal(notesHtml(plugin, { notes: 'plain **bold** text' }), '<p>plain <strong>bold</strong> text</p>', 'bold rendered');
+    // 斜体 *x*（行首单星无空格不会被误判为无序列表）
+    assert.equal(notesHtml(plugin, { notes: '*em* text' }), '<p><em>em</em> text</p>', 'italic rendered');
+    // 删除线 ~~x~~
+    assert.equal(notesHtml(plugin, { notes: '~~gone~~ now' }), '<p><del>gone</del> now</p>', 'strikethrough rendered');
+    // 行内代码 `x`
+    assert.equal(notesHtml(plugin, { notes: 'run `npm test` now' }), '<p>run <code>npm test</code> now</p>', 'inline code rendered');
+    // 代码内部的其他标记保持字面（代码片段语义优先）
+    assert.equal(notesHtml(plugin, { notes: '`a **b** c`' }), '<p><code>a **b** c</code></p>', 'marks inside inline code stay literal');
+    // 同一段混排
+    const mixedInline = '**加粗** 和 *斜体* 和 ~~删除~~ 和 `代码`';
+    assert.equal(notesHtml(plugin, { notes: mixedInline }), '<p><strong>加粗</strong> 和 <em>斜体</em> 和 <del>删除</del> 和 <code>代码</code></p>', 'mixed inline marks rendered');
+    // 列表项 / 标题内也支持行内标记
+    assert.equal(notesHtml(plugin, { notes: '- **重点** 事项' }), '<ul><li><strong>重点</strong> 事项</li></ul>', 'bold inside list item');
+    assert.equal(notesHtml(plugin, { notes: '## **标题**' }), '<h2><strong>标题</strong></h2>', 'bold inside heading');
+    // 误判防护：乘号空白分隔不转斜体（CommonMark flanking 简化版）
+    assert.equal(notesHtml(plugin, { notes: '3 * 4 * 5' }), '<p>3 * 4 * 5</p>', 'spaced single stars stay literal');
+    // 误判防护：不支持下划线语法，snake_case / __init__ 原样保留
+    assert.equal(notesHtml(plugin, { notes: 'hello_world and __init__' }), '<p>hello_world and __init__</p>', 'underscore syntax not supported, snake_case intact');
+    // 未配对标记保持字面
+    assert.equal(notesHtml(plugin, { notes: 'a ** b * c' }), '<p>a ** b * c</p>', 'unpaired marks stay literal');
+    // XSS 安全：行内标记包裹的脚本必须 escape
+    const boldXss = '**<img src=x onerror=alert(1)>**';
+    const out19 = notesHtml(plugin, { notes: boldXss });
+    assertNoActiveTokens(out19);
+    assert.equal(out19, '<p><strong>&lt;img src=x onerror=alert(1)&gt;</strong></p>', 'bold content is escaped text');
+    // 加粗 + 实体字符混排
+    assert.equal(notesHtml(plugin, { notes: '**A & B**' }), '<p><strong>A &amp; B</strong></p>', 'ampersand inside bold escaped');
+
+    // A20) v2.6.7 下划线 ++x++（Markdown 扩展通用约定，与 ⌘U 快捷键配套）
+    assert.equal(notesHtml(plugin, { notes: '++underline++ me' }), '<p><u>underline</u> me</p>', 'underline rendered');
+    assert.equal(notesHtml(plugin, { notes: '**粗** 和 ++线++ 和 ~~删~~ 和 `码`' }), '<p><strong>粗</strong> 和 <u>线</u> 和 <del>删</del> 和 <code>码</code></p>', 'underline mixed with other inline marks');
+    // 误判防护：普通加号 / C++ 字面保留
+    assert.equal(notesHtml(plugin, { notes: '1 + 2 + 3' }), '<p>1 + 2 + 3</p>', 'spaced plus signs stay literal');
+    assert.equal(notesHtml(plugin, { notes: 'C++ and Rust' }), '<p>C++ and Rust</p>', 'trailing ++ in C++ stays literal');
+    // 代码片段内的下划线标记保持字面
+    assert.equal(notesHtml(plugin, { notes: '`a ++b++ c`' }), '<p><code>a ++b++ c</code></p>', 'underline marks inside inline code stay literal');
+    assert.equal(notesHtml(plugin, { notes: '++ a ++' }), '<p>++ a ++</p>', 'space-flanked ++ not treated as underline');
+
     // ===== Part B: 产品详情卡渲染路径 =====
     // 验证 _renderAssetNotesSectionHtml 在 three product card 渲染路径中被使用，
     // 且输出受控 HTML 注入到 .am-product-notes 容器。
@@ -328,6 +369,61 @@ async function main() {
     assert.equal(parsed6.querySelector('img'), null, 'no <img> child in detail card notes');
     assert.equal(parsed6.querySelector('iframe'), null, 'no <iframe> child in detail card notes');
     assert.equal(parsed6.querySelector('a'), null, 'no <a> child in detail card notes (anchor not in supported syntax)');
+
+    // ===== Part D: v2.6.7 行内快捷键（⌘/Ctrl+B 加粗等，交互对齐思源默认键位）=====
+    {
+        const { plugin: p8, document: doc8 } = createHarness([]);
+        const ta = doc8.createElement('textarea');
+        ta.setAttribute('name', 'notes');
+        doc8.body.appendChild(ta);
+        const binding = p8._bindMarkdownTextarea(ta);
+
+        // D1) _mdToggleInlineWrap 纯交互：包裹 / 解除 / 紧贴成对 / 空选区
+        ta.value = 'hello world';
+        ta.selectionStart = 0; ta.selectionEnd = 5;
+        p8._mdToggleInlineWrap(ta, '**');
+        assert.equal(ta.value, '**hello** world', 'shortcut wraps selection with bold marker');
+        ta.selectionStart = 0; ta.selectionEnd = 9;
+        p8._mdToggleInlineWrap(ta, '**');
+        assert.equal(ta.value, 'hello world', 're-applying on wrapped selection unwraps it');
+        ta.value = '**hello** world';
+        ta.selectionStart = 2; ta.selectionEnd = 7;
+        p8._mdToggleInlineWrap(ta, '**');
+        assert.equal(ta.value, 'hello world', 'selection hugging a marker pair removes the markers');
+        ta.value = 'abc';
+        ta.selectionStart = 3; ta.selectionEnd = 3;
+        p8._mdToggleInlineWrap(ta, '~~');
+        assert.equal(ta.value, 'abc~~~~', 'empty selection inserts an empty marker pair');
+
+        // D2) keydown 路由：Cmd/Ctrl+B → 加粗、Ctrl+Shift+S → 删除线、Cmd+Option+B（标题档）不受影响
+        const fireKey = (init) => {
+            const ev = new doc8.defaultView.Event('keydown', { bubbles: true, cancelable: true });
+            Object.assign(ev, init);
+            ta.dispatchEvent(ev);
+            return ev.defaultPrevented;
+        };
+        ta.value = 'select me';
+        ta.selectionStart = 0; ta.selectionEnd = 9;
+        assert.equal(fireKey({ code: 'KeyB', ctrlKey: true, shiftKey: false, altKey: false }), true, 'Ctrl+B is consumed by the notes editor');
+        assert.equal(ta.value, '**select me**', 'Ctrl+B routes to bold wrap');
+        ta.selectionStart = 2; ta.selectionEnd = 11;
+        assert.equal(fireKey({ code: 'KeyS', ctrlKey: true, shiftKey: true, altKey: false }), true, 'Ctrl+Shift+S is consumed by the notes editor');
+        assert.equal(ta.value, '**~~select me~~**', 'Ctrl+Shift+S routes to strikethrough wrap');
+        ta.selectionStart = 0; ta.selectionEnd = 0;
+        assert.equal(fireKey({ code: 'KeyU', ctrlKey: true, shiftKey: false, altKey: false }), true, 'Ctrl+U is consumed by the notes editor');
+        assert.equal(ta.value, '++++**~~select me~~**', 'Ctrl+U routes to underline wrap');
+        ta.value = '# plain heading line';
+        ta.selectionStart = 2; ta.selectionEnd = 2;
+        assert.equal(fireKey({ code: 'KeyB', ctrlKey: true, altKey: true, shiftKey: false }), false, 'Cmd+Option+B (heading tier combo) is not intercepted');
+        assert.equal(ta.value, '# plain heading line', 'heading combo leaves the value untouched');
+
+        // D3) 备注输入框渲染快捷键提示行；销毁后随 wrapper 移除
+        const hint = ta.parentNode.querySelector('[data-md-shortcut-hint]');
+        assert.ok(hint, 'notes textarea shows the shortcut hint line');
+        assert.match(hint.textContent, /Ctrl\+B/, 'hint lists the bold shortcut');
+        binding.destroy();
+        assert.equal(doc8.querySelector('[data-md-shortcut-hint]'), null, 'destroy removes the hint with the wrapper');
+    }
 
     // ===== Part C: 表单保存路径不回归 =====
     // C1) 编辑表单 notes textarea 仍保存原始 Markdown 字符串。

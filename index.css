@@ -3569,6 +3569,30 @@
     padding-left: 20px;
 }
 .am-md-rendered li { margin: 1px 0; }
+/* v2.6.7：备注输入框下方行内快捷键提示（仅资产备注 textarea 渲染，见 _bindMarkdownTextarea） */
+.am-md-shortcut-hint {
+    margin-top: 4px;
+    font-size: 11px;
+    line-height: 1.5;
+    text-align: left;
+    color: var(--b3-text-color-secondary, rgba(0, 0, 0, 0.5));
+    user-select: none;
+    -webkit-user-select: none;
+}
+/* v2.6.7：行内 Markdown（与详情卡 .am-product-notes 同口径） */
+.am-md-rendered strong { font-weight: 700; }
+.am-md-rendered em { font-style: italic; }
+.am-md-rendered del { text-decoration: line-through; opacity: 0.62; }
+.am-md-rendered u { text-decoration: underline; }
+.am-md-rendered code {
+    font-family: var(--b3-font-family-code, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+    font-size: 0.92em;
+    padding: 1px 4px;
+    border-radius: 4px;
+    background: var(--b3-theme-background-light, rgba(0, 0, 0, 0.06));
+}
+[data-theme-mode="dark"] .am-md-rendered code,
+.b3-theme-dark .am-md-rendered code { background: rgba(255, 255, 255, 0.10); }
 
 .am-form-shell__hint {
     display: flex;
@@ -7620,6 +7644,14 @@
     box-shadow:
         0 10px 40px rgba(0, 0, 0, 0.5),
         0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+/* v2.6.7：详情卡文字可拖选——思源全局 `.dock { user-select: none }` 会继承进插件
+   面板，产品卡（挂 dock 内）里备注等文字此前无法拖动选择。整卡显式恢复 text，
+   按钮等交互元素点击行为不受影响；宿主在弹窗 / body 时同样安全。 */
+.am-product-card,
+.am-product-card * {
+    -webkit-user-select: text;
+    user-select: text;
 }
 @keyframes amProductPopIn {
     from { transform: scale(0.85); opacity: 0; }
@@ -12620,6 +12652,9 @@
 .am-asset-item__daily { flex-direction: row; align-items: center; gap: 6px; }
 .am-asset-item__daily-label { color: var(--b3-text-color-secondary); font-size: var(--am-fs-meta); }
 .am-asset-item__daily-text { color: var(--b3-theme-on-background); font-size: var(--am-fs-meta); font-weight: 500; }
+/* v2.6.7：次数权益底部数字浅色化——与「日均成本」label 同为次要色，矩阵视图同步覆盖。 */
+.am-asset-item__daily-text--muted { color: var(--b3-text-color-secondary); font-weight: 400; }
+.am-asset-grid .am-asset-matrix .am-asset-item__daily-text--muted { color: var(--b3-text-color-secondary); font-weight: 400; }
 /* R2 项4：标签改横排后放宽容器上限（46% → 60%），让 2-3 个常见标签能横向展开；
    仍保留上限防止标签吞掉整行挤压左侧价格，超出部分 flex-wrap 换行。
    矩阵侧由下方 .am-asset-grid .am-asset-item__tags { max-width:100% } 覆盖，不受影响。 */
@@ -12693,18 +12728,20 @@
  * v2.6.6：首页「已退役」分割线 —— 非退役产品与退役产品（含过期订阅）之间的
  * 水平分隔；列表视图为普通 flex 行，矩阵视图内跨全行（grid-column: 1 / -1）。
  * 暗色主题复用 CSS 变量，无需单独覆盖。
+ * v2.6.7：分割线延伸到两端——去掉左右 2px margin，横线改纯色
+ * （原两端 transparent 渐变在视觉上「没到两端」）。
  * ============================================ */
 .am-retired-divider {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin: 14px 2px 10px;
+    margin: 14px 0 10px;
     user-select: none;
 }
 .am-retired-divider__line {
     flex: 1;
     height: 1px;
-    background: linear-gradient(to right, transparent, rgba(144, 147, 153, 0.45), transparent);
+    background: rgba(144, 147, 153, 0.45);
 }
 .am-retired-divider__label {
     flex-shrink: 0;
@@ -12715,7 +12752,13 @@
 }
 .am-asset-grid .am-retired-divider {
     grid-column: 1 / -1;
-    margin: 8px 2px 4px;
+    margin: 8px 0 4px;
+}
+/* v2.6.7 修复：宽屏下列表视图自适应为 2 列 grid（v1.7.3），分割线同样要跨全行，
+ * 否则只占左列一格、右侧仍是在役/退役卡片混排。 */
+.am-asset-list[data-cols="2"] .am-retired-divider {
+    grid-column: 1 / -1;
+    margin: 8px 0 4px;
 }
 
 /* 再次订阅绿描边按钮（仅虚拟订阅过期渲染） */
@@ -14030,6 +14073,23 @@
     line-height: 1.6;
 }
 .am-product-notes > li > p { margin: 0; }
+
+/* v2.6.7：行内 Markdown——加粗 **x** / 斜体 *x* / 删除线 ~~x~~ / 行内代码 `x`
+   （_renderAssetNotesHtml 输出受控标签 strong / em / del / code，标签内均为转义后文本） */
+.am-product-notes strong { font-weight: 700; }
+.am-product-notes em { font-style: italic; }
+.am-product-notes del { text-decoration: line-through; opacity: 0.62; }
+.am-product-notes u { text-decoration: underline; }
+.am-product-notes code {
+    font-family: var(--b3-font-family-code, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+    font-size: 0.92em;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: var(--b3-theme-background-light, rgba(0, 0, 0, 0.06));
+    color: var(--b3-theme-on-background);
+}
+[data-theme-mode="dark"] .am-product-notes code,
+.b3-theme-dark .am-product-notes code { background: rgba(255, 255, 255, 0.10); }
 
 /* 暗色：字色跟随主题；标题维持主题前景色，列表 marker 颜色不变（浏览器原生即可） */
 [data-theme-mode="dark"] .am-product-notes,

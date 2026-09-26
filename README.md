@@ -13,6 +13,19 @@ Your personal asset keeper in SiYuan · Wishlist / Active / Retired · Daily cos
 
 ## Changelog
 
+### v2.6.7
+
+**Consistent out-of-warranty wording, bold notes, and selectable detail-card text**
+
+- New: asset notes now support inline Markdown — bold `**text**`, italic `*text*`, underline `++text++`, strikethrough `~~text~~`, and inline code render in both the product detail card and the edit-form preview; the saved source text is untouched and HTML is safely escaped.
+- New: notes editing supports SiYuan's familiar shortcuts — ⌘/Ctrl+B bold, ⌘/Ctrl+I italic, ⌘/Ctrl+U underline, ⌘/Ctrl+Shift+S strikethrough, ⌘/Ctrl+Shift+K inline code; press once to wrap the selection, again to unwrap, with a shortcut hint below the notes field.
+- Improved: text in the product detail card (including notes) can now be drag-selected and copied — SiYuan panels disable text selection by default, and the detail card now opts back in; releasing a selection drag over the backdrop no longer closes the card by accident.
+- Improved: warranty and subscription reminders are now clearly separated — physical products nearing warranty end show "Warranty expiring soon" (subscriptions keep the date / "ends in N days" wording) and warranty due today shows "Warranty ends today", consistently on the home expiry reminder and the report's expiring list.
+- Improved: physical products past their warranty now show "Out of warranty" instead of the subscription-flavored "Expired" on list and matrix cards.
+- Improved: out-of-warranty products no longer turn the status dot grey in the product list — grey now only means retired (including expired subscriptions); warranty state is conveyed by the "Out of warranty" badge.
+- Improved: the "N uses left · ¥X/use" figures on count-based prepaid cards now use a muted secondary color, and the home "Retired" divider stretches flush to the card edges.
+- Improved: the per-day cost label on product cards is shortened from "Daily cost" to "Daily" for a tighter layout.
+
 ### v2.6.6
 
 **Smoother deletions, a steadier settings window, and expired subscriptions now count as retired**
@@ -35,14 +48,5 @@ Your personal asset keeper in SiYuan · Wishlist / Active / Retired · Daily cos
 - New: reports gain "Dimension analysis" — spending rankings by brand and by purchase channel. Tap an entry to view the underlying assets, and choose which rankings to show in Settings.
 - Improved: the tag limit is gone — add as many tags as you like.
 - Improved: required form fields are now marked with a red dot, so you can see at a glance what must be filled in; optional fields can be left empty.
-
-### v2.6.4
-
-**Filter memory, subscription monthly spending fix, SiYuan 3.8.3 compatibility, and faster AI actions**
-
-- Improved: the asset page now remembers the filters you last chose — status, type, sort, and tags — and restores them the next time you open the plugin; for example, if you filtered by "Active", it stays on "Active" next time.
-- Fixed: monthly spending in the report's "Subscription analysis" no longer disagrees with the daily average — it is now converted by the actual length of the current subscription period, matching the daily average; a subscription costing about 0.55 yuan per day now shows roughly 16.7 yuan per month instead of a doubled figure.
-- Improved: compatibility with SiYuan Notes 3.8.3 — the AI assistant can call the asset management tools normally on the latest kernel; the new kernel changed how plugin tools are registered, and the plugin handles this automatically with no action needed.
-- Improved: AI edits to your assets (renaming, changing status, updating notes, and so on) now respond faster — results take effect as soon as they are saved, with no fixed waiting period; on environments that don't support this, the plugin automatically falls back to the previous behavior with no loss of stability.
 
 > For the full changelog, see [CHANGELOG.md](./CHANGELOG.md).

@@ -1,10 +1,33 @@
 /* eslint-disable no-undef */
 /**
- * SiYuan 资产管理插件 v2.6.6 — 主模板（不带 IIFE）
+ * SiYuan 资产管理插件 v2.6.7 — 主模板（不带 IIFE）
  *
  * 通过 scripts/concat.js 把 api/*.js 拼接在顶部，生成单文件 index.js。
  *
- * 功能（v0.14.0 + v0.15-T6 + v0.16-T1 / T3 / T5 / T6 / T7 + v0.17-T1-β / T1-γ / T1-δ + v0.17-Hotfix-A + v0.17-T3-α / T3-β + v1.1.0 + v1.2.0 + v1.3.0 + v1.4.0 + v1.5.0 + v1.6.0 + v1.7.0 + v2.3.0 + v2.4.0 + v2.4.1 + v2.4.2 + v2.5.0 + v2.6.0 + v2.6.1 + v2.6.3 + v2.6.4 + v2.6.5 + v2.6.6）：
+ * 功能（v0.14.0 + v0.15-T6 + v0.16-T1 / T3 / T5 / T6 / T7 + v0.17-T1-β / T1-γ / T1-δ + v0.17-Hotfix-A + v0.17-T3-α / T3-β + v1.1.0 + v1.2.0 + v1.3.0 + v1.4.0 + v1.5.0 + v1.6.0 + v1.7.0 + v2.3.0 + v2.4.0 + v2.4.1 + v2.4.2 + v2.5.0 + v2.6.0 + v2.6.1 + v2.6.3 + v2.6.4 + v2.6.5 + v2.6.6 + v2.6.7）：
+ *
+ * v2.6.7（保修文案区分 + 次数数字浅色 + 退役分割线贴边 + 备注富文本 + 详情卡可选中）：
+ *   - 保修到期文案与订阅区分：实物保修档徽章由「今日到期 / N 天后到期」改为
+ *       「今日过保 / N 天后过保」（badgeWarrantyToday / badgeWarrantyDaysLeft）；
+ *       订阅、预付的「到期」文案保持不变
+ *   - 过保徽章收口：列表 / 矩阵卡到期徽章过期档对实物改「已过保」（warrantyExpiredBadge），
+ *       订阅仍「已过期」（badgeExpired）——实物保修到期不再显示「过期」字样
+ *   - 详情卡保修块措辞对齐：今天到期改「今日过保」（badgeWarrantyToday）、
+ *       1-7 天改「即将过保」（新键 warrantyExpiringSoon）、8 天以上维持「剩 N 天」
+ *   - 到期提醒实物行改固定文案「今天过保 / 即将过保」（不再裸显日期），订阅行保持
+ *       「日期 / 今天到期 / N 天内到期」，两类提醒文本一眼区分（首页 popover + 报表行同口径）
+ *   - 过保不改圆点：状态点灰色只表达「退役」（含过期订阅视同退役）；实物保修日虽经
+ *       important 兜底进入 expiryOn，但不再把实物圆点变灰，过保产品保持彩色圆点
+ *   - 次数权益卡片底部「剩余 N 次 · ¥X/次」数字改浅色次要色（--muted，
+ *       与「日均成本」label 同色调），列表与矩阵视图同步生效
+ *   - 首页「已退役」分割线延伸到两端：去掉左右 2px margin，横线由两端
+ *       transparent 渐变改纯色，与卡片左右边缘完全对齐（矩阵视图同步）
+ *   - 详情卡文字可拖选：思源 .dock 全局 user-select:none 会继承进插件面板，产品卡
+ *       内容显式恢复 user-select:text（备注等文字可拖选复制）；拖选后松点落在遮罩上
+ *       不再误关详情卡（按下起点在遮罩上才允许点空白关闭）
+ *   - 备注行内 Markdown：加粗 **x**、斜体 *x*、删除线 ~~x~~、行内代码 `x`——
+ *       escape 之后单遍受控替换（详情卡备注与编辑表单预览同步支持），
+ *       不支持 _x_ 下划线语法（避免误伤 snake_case），CSS 同步补 strong/em/del/code 样式
  *
  * v2.6.6（目录删除放开 + 设置弹窗定高 + 种草历程门卫 + 首页退役分组 + 过期即退役口径）：
  *   - 品牌 / 渠道删除放开：被资产引用时不再拒绝删除，同一事务内自动把引用该项的
@@ -8864,7 +8887,7 @@ const exchangeRateApi = __am_fx;
 const { Plugin, Dialog, Menu, openTab, openMobileFileById } = require("siyuan");
 
 const DOCK_TYPE = "asset-management-dock";
-const PLUGIN_VERSION = "2.6.6";
+const PLUGIN_VERSION = "2.6.7";
 const AUTHOR_URL = "https://ld246.com/member/Dilyar";
 const ICONS8_URL = "https://icons8.com";
 
@@ -12371,7 +12394,14 @@ async deleteFormalWorkflowRecord(id, mode, recordId) {
         pop.className = 'am-home-expiry-pop';
         pop.setAttribute('data-home-expiry-pop', '');
         const rows = list.map(({ card, date, days }) => {
-            const right = date ? escapeHtml(date) : (days <= 0 ? escapeHtml(this._t('dashboardExpiryToday', '今天到期')) : escapeHtml(this._t('dashboardExpiry7', '{days} 天内到期').replace('{days}', String(days))));
+            // v2.6.7：实物保修项固定「今天过保 / 即将过保」，不再裸显日期——与订阅行的
+            // 「日期 / 今天到期 / N 天内到期」文本一眼区分（具体保修日在产品卡查看）。
+            const isWarranty = card && card.kind === FORMAL_ASSET_KIND.PHYSICAL;
+            const right = isWarranty
+                ? escapeHtml(days <= 0 ? this._t('dashboardWarrantyExpiryToday', '今天过保') : this._t('warrantyExpiringSoon', '即将过保'))
+                : escapeHtml(date || (days <= 0
+                    ? this._t('dashboardExpiryToday', '今天到期')
+                    : this._t('dashboardExpiry7', '{days} 天内到期').replace('{days}', String(days))));
             return `<button type="button" class="am-home-expiry-pop__row" data-expiry-card="${escapeHtml(card.id)}"><span>${escapeHtml(card.name)}</span><strong>${right}</strong></button>`;
         }).join('');
         pop.innerHTML = `<div class="am-home-expiry-pop__head"><span>${escapeHtml(this._t('dashboardExpiringSoonTitle', '即将到期'))}<small>${list.length}</small></span><button type="button" class="am-home-expiry-pop__close" aria-label="${escapeHtml(this._t('btnClose', '关闭'))}">×</button></div><div class="am-home-expiry-pop__list">${rows}</div>`;
@@ -13058,9 +13088,10 @@ const bindDropdownEvents = () => {
         // 即将到期提示：7 天内（含今天到期，不含已过期）；无则整块不渲染。点击复用资产产品卡。
         // v1.6.0：标题去「（7 天内）」括号、位置移到概览正下方；行右列改为具体到期日（右对齐、中性色，
         // 与其余 surface 文字一致），名称跨前两列、到期日落第三列右对齐。
+        // v2.6.7：实物保修项行右列固定「今天过保 / 即将过保」（不裸显日期），与订阅「到期」行区分。
         const expiringSoon = this._getExpiringSoonList(report);
         const expiringHtml = expiringSoon.length
-            ? `<section class="am-dashboard__surface am-dashboard-expiring"><h3>${escapeHtml(this._t('dashboardExpiringSoonTitle', '即将到期'))}</h3><div class="am-dashboard-list">${expiringSoon.map(({ card, date, days }) =>`<button type="button" class="am-dashboard-asset-row" data-action="card" data-id="${escapeHtml(card.id)}"><span>${escapeHtml(card.name)}</span><strong>${date ? escapeHtml(date) : (days <= 0 ? escapeHtml(this._t('dashboardExpiryToday', '今天到期')) : escapeHtml(this._t('dashboardExpiry7', '{days} 天内到期').replace('{days}', String(days))))}</strong></button>`).join('')}</div></section>`
+            ? `<section class="am-dashboard__surface am-dashboard-expiring"><h3>${escapeHtml(this._t('dashboardExpiringSoonTitle', '即将到期'))}</h3><div class="am-dashboard-list">${expiringSoon.map(({ card, date, days }) => { const isWarranty = card && card.kind === FORMAL_ASSET_KIND.PHYSICAL; const right = isWarranty ? escapeHtml(days <= 0 ? this._t('dashboardWarrantyExpiryToday', '今天过保') : this._t('warrantyExpiringSoon', '即将过保')) : escapeHtml(date || (days <= 0 ? this._t('dashboardExpiryToday', '今天到期') : this._t('dashboardExpiry7', '{days} 天内到期').replace('{days}', String(days)))); return`<button type="button" class="am-dashboard-asset-row" data-action="card" data-id="${escapeHtml(card.id)}"><span>${escapeHtml(card.name)}</span><strong>${right}</strong></button>`; }).join('')}</div></section>`
              : '';
         // v2.6.3 补充：订阅分析 / 预付分析 / 种草转化三张独立卡片合并为一张
         // surface，分段 tab 切换内容，缩短报表纵向长度。可用判定沿用 v2.6.3：
@@ -16027,12 +16058,15 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
      *   - 有序列表：行首 "1. " 形式（仅识别 ASCII 数字+点+空格，避免误匹配 "7.5%" 之类正文）
      *   - 无序列表：行首 "- " / "* " / "+ "
      *   - 段落：其他行（连续多行合并为一段；段内换行用 <br>；段间用空行分隔）
+     *   - v2.6.7 行内：加粗 **x**、斜体 *x*、删除线 ~~x~~、行内代码 `x`
+     *     （经 _renderAssetNotesInlineHtml 单遍受控替换；不支持 _x_ 下划线语法，避免误伤 snake_case）
      *
      * 安全机制（绝不让原始 HTML / 脚本注入 DOM）：
      *   1. 先 HTML escape 整段（& < > " '），所有用户文本必须先转义再进入任何受控标签
-     *   2. 仅按行首受控 token 切块，绝不解析标签内部 inline 语法
-     *   3. 始终输出受控标签 h1-h6 / ol / ul / li / p / br；标签内**只**含 escape 后的文本
-     *   4. 不支持的语法（图片/链接/代码块/引用/表格/加粗/斜体/HTML 直传）按字面转义后展示
+     *   2. 仅按行首受控 token 切块；行内标记在 escape 后的文本上单遍替换，
+     *      替换只注入受控标签 strong / em / del / code，标签内**只**含 escape 后的文本
+     *   3. 始终输出受控标签 h1-h6 / ol / ul / li / p / br / strong / em / del / code
+     *   4. 不支持的语法（图片/链接/代码块/引用/表格/HTML 直传）按字面转义后展示
      *
      * 输入约定：textarea 仍保存原始 Markdown 字符串（不被修改），本函数只在展示侧使用。
      * 纯函数，依赖 escapeHtml（已由 IIFE 解构注入），不读 / 写 storage。
@@ -16050,7 +16084,7 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
             const headingMatch = /^(#{1,6})\s+(.*)$/.exec(line);
             if (headingMatch) {
                 const level = headingMatch[1].length;
-                out.push('<h' + level + '>' + escapeHtml(headingMatch[2].trim()) + '</h' + level + '>');
+                out.push('<h' + level + '>' + this._renderAssetNotesInlineHtml(escapeHtml(headingMatch[2].trim())) + '</h' + level + '>');
                 i++;
                 continue;
             }
@@ -16073,9 +16107,9 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
                 if (items.length) {
                     let html = '<ol>';
                     for (const it of items) {
-                        html += '<li>' + escapeHtml(it.text) + '</li>';
+                        html += '<li>' + this._renderAssetNotesInlineHtml(escapeHtml(it.text)) + '</li>';
                         if (it.subs.length) {
-                            html += '<ol>' + it.subs.map(s => '<li>' + escapeHtml(s) + '</li>').join('') + '</ol>';
+                            html += '<ol>' + it.subs.map(s => '<li>' + this._renderAssetNotesInlineHtml(escapeHtml(s)) + '</li>').join('') + '</ol>';
                         }
                     }
                     out.push(html + '</ol>');
@@ -16101,9 +16135,9 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
                 if (items.length) {
                     let html = '<ul>';
                     for (const it of items) {
-                        html += '<li>' + escapeHtml(it.text) + '</li>';
+                        html += '<li>' + this._renderAssetNotesInlineHtml(escapeHtml(it.text)) + '</li>';
                         if (it.subs.length) {
-                            html += '<ul>' + it.subs.map(s => '<li>' + escapeHtml(s) + '</li>').join('') + '</ul>';
+                            html += '<ul>' + it.subs.map(s => '<li>' + this._renderAssetNotesInlineHtml(escapeHtml(s)) + '</li>').join('') + '</ul>';
                         }
                     }
                     out.push(html + '</ul>');
@@ -16123,10 +16157,36 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
                 i++;
             }
             if (paraLines.length) {
-                out.push('<p>' + paraLines.map(l => escapeHtml(l)).join('<br>') + '</p>');
+                out.push('<p>' + paraLines.map(l => this._renderAssetNotesInlineHtml(escapeHtml(l))).join('<br>') + '</p>');
             }
         }
         return out.join('');
+    }
+
+    /**
+     * v2.6.7：备注行内 Markdown（加粗 / 斜体 / 下划线 / 删除线 / 行内代码）。
+     *
+     * 输入必须是 escapeHtml **之后**的文本（本函数不再做 HTML 转义）；
+     * 单遍正则交替匹配，同一位置按 代码、加粗、下划线、删除线、斜体 的优先级取第一个命中，
+     * 因此：
+     *   - `x` 内部的加粗、下划线、删除线、斜体标记保持字面（代码片段语义优先，不再二次解析）
+     *   - **x** 优先于 *x*（先吃双星，剩余单星才作斜体）
+     *   - ++x++ 为下划线（Markdown 扩展通用约定，与快捷键 ⌘U 配套）
+     *   - 不支持 _x_ / __x__ 下划线斜体语法，避免误伤 snake_case、文件名等正文
+     * 加粗 / 下划线 / 删除线 / 斜体的内容首尾不能是空白（CommonMark flanking 简化版），
+     * 「3 * 4 * 5」这类乘号文本不会被误判为斜体；标签内只含 escape 后的文本，无注入面。
+     * 纯函数。
+     */
+    _renderAssetNotesInlineHtml(escaped) {
+        const s = String(escaped == null ? '' : escaped);
+        if (s.indexOf('`') <0 && s.indexOf('*') <0 && s.indexOf('~') <0 && s.indexOf('+') <0) return s; return s.replace( /`([^`\n]+)`|\*\*(\S(?:[^*\n]*\S)?)\*\*|\+\+(\S(?:[^+\n]*\S)?)\+\+|~~(\S(?:[^~\n]*\S)?)~~|\*(\S(?:[^*\n]*\S)?)\*/g,
+            (m, code, bold, underline, del, em) => {
+                if (code !== undefined) return '<code>' + code + '</code>';
+                if (bold !== undefined) return '<strong>' + bold + '</strong>';
+                if (underline !== undefined) return '<u>' + underline + '</u>';
+                if (del !== undefined) return '<del>' + del + '</del>';
+                return '<em>' + em + '</em>';
+            });
     }
 
     /**
@@ -16167,6 +16227,21 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
         // textarea 不在 .am-form-section 内，closest 返回 null，不受影响。
         const noteSection = textarea.closest ? textarea.closest('.am-form-section') : null;
         if (noteSection) noteSection.classList.add('am-md-section');
+
+        // v2.6.7：行内样式快捷键提示（仅资产备注 textarea；退役 / 转让等小表单的
+        // Markdown 输入不加，避免视觉噪音）。键位前缀按运行平台显示 ⌘ / Ctrl。
+        if (textarea.name === 'notes' && typeof document !== 'undefined') {
+            try {
+                const nav = typeof navigator !== 'undefined' ? navigator : null;
+                const isMac = /Mac|iPhone|iPad/i.test(String((nav && (nav.platform || nav.userAgent)) || ''));
+                const mod = isMac ? '⌘' : 'Ctrl';
+                const hint = document.createElement('div');
+                hint.className = 'am-md-shortcut-hint';
+                hint.setAttribute('data-md-shortcut-hint', '');
+                hint.textContent = this._t('markdownShortcutHint', '{mod}+B 加粗 · {mod}+I 斜体 · {mod}+U 下划线 · {mod}+Shift+S 删除线 · {mod}+Shift+K 代码').replaceAll('{mod}', mod);
+                wrapper.appendChild(hint);
+            } catch (_) { /* 提示属纯装饰，任何环境下失败都不影响输入 */ }
+        }
 
         const renderView = () => {
             const html = this._renderAssetNotesHtml(textarea.value);
@@ -16266,6 +16341,28 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
                 e.preventDefault();
                 this._mdToggleLinePrefix(textarea, '- ');
                 return;
+            }
+            // v2.6.7：行内样式快捷键对齐思源默认键位（conf.keymap.editor.insert）：
+            //   ⌘/Ctrl+B 加粗 **、⌘/Ctrl+I 斜体 *、⌘/Ctrl+U 下划线 ++、
+            //   ⇧⌘/Ctrl+Shift+S 删除线 ~~、⇧⌘/Ctrl+Shift+K 行内代码。
+            // 按 e.code 匹配（跨键盘布局稳定），显式排除 altKey 避免与 ⌘+Option+数字 标题档冲突。
+            // 注意：本文件构建脚本按裸反引号配对压缩模板串，注释与单字符字面量里不要写裸反引号。
+            const mod = e.ctrlKey || e.metaKey;
+            if (mod && !e.altKey) {
+                const INLINE_SHORTCUTS = [
+                    { code: 'KeyB', shift: false, marker: '**' },
+                    { code: 'KeyI', shift: false, marker: '*' },
+                    { code: 'KeyU', shift: false, marker: '++' },
+                    { code: 'KeyS', shift: true, marker: '~~' },
+                    { code: 'KeyK', shift: true, marker: '\u0060' },
+                ];
+                const shortcut = INLINE_SHORTCUTS.find(item => e.code === item.code && !!e.shiftKey === item.shift);
+                if (shortcut) {
+                    e.preventDefault();
+                    this._mdToggleInlineWrap(textarea, shortcut.marker);
+                    autoGrow();
+                    return;
+                }
             }
             if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
                 this._mdHandleListEnter(textarea, e);
@@ -16373,6 +16470,54 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
     }
 
     /**
+     * v2.6.7：在选区上切换行内标记（交互对齐思源 ⌘B/⌘I/⌘U/⇧⌘S/⇧⌘K）。
+     *   - 有选区且选区本身已被标记包裹 → 解除包裹（选区回落到内容本身）；
+     *   - 有选区且前后紧贴成对标记 → 去掉两侧标记（先选中文字再按一次等价于取消）；
+     *   - 有选区未包裹 → 两侧加上标记，选区保持选中内容；
+     *   - 无选区 → 插入一对空标记，光标落在中间，可直接续写。
+     * 标记是否成对渲染由 _renderAssetNotesInlineHtml 按行内语法兜底，不跨行也安全。
+     * @returns {boolean} 是否修改了内容
+     */
+    _mdToggleInlineWrap(textarea, marker) {
+        if (!textarea) return false;
+        const len = marker.length;
+        const start = textarea.selectionStart == null ? 0 : textarea.selectionStart;
+        const end = textarea.selectionEnd == null ? 0 : textarea.selectionEnd;
+        const value = String(textarea.value == null ? '' : textarea.value);
+        const selected = value.slice(start, end);
+        const before = value.slice(0, start);
+        const after = value.slice(end);
+        const setSelection = (from, to) => {
+            if (typeof textarea.setSelectionRange === 'function') textarea.setSelectionRange(from, to);
+        };
+        let nextValue;
+        let nextStart;
+        let nextEnd;
+        if (selected.length >= len * 2 && selected.startsWith(marker) && selected.endsWith(marker)) {
+            // 选区自带成对标记 → 解除
+            const inner = selected.slice(len, selected.length - len);
+            nextValue = before + inner + after;
+            nextStart = start;
+            nextEnd = start + inner.length;
+        } else if (before.endsWith(marker) && after.startsWith(marker)) {
+            // 选区两侧紧贴成对标记 → 去掉两侧
+            const innerStart = start - len;
+            nextValue = value.slice(0, innerStart) + selected + value.slice(end + len);
+            nextStart = innerStart;
+            nextEnd = innerStart + selected.length;
+        } else {
+            // 包裹 / 插入空对
+            nextValue = before + marker + selected + marker + after;
+            nextStart = start + len;
+            nextEnd = selected ? start + len + selected.length : start + len;
+        }
+        textarea.value = nextValue;
+        setSelection(nextStart, nextEnd);
+        textarea.dispatchEvent(createPluginDomEvent(textarea, 'input'));
+        return true;
+    }
+
+    /**
      * v1.4.0：写入新 value 并按"同层连续编号"重排有序源码序号，再按"行号+列"还原光标。
      * Tab / Shift+Tab / Enter 反缩进 / Enter 续行 四条路径共用，保证任何改变列表缩进或
      * 行结构的编辑后，源码有序数字都跟随同级（renumber 仅改数字、不改行结构，故行列映射安全）。
@@ -16457,8 +16602,9 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
      * card warranty block and the edit-form live hint badge. Reuses the tier logic of
      * formatRemainingBadge (normal >30 / soon 8-30 / urgent 1-7 & 0 / expired <0) but
      * renders warranty-specific labels:
-     *   - daysLeft > 0   → 「剩 N 天」(warrantyDaysLeft)
-     *   - daysLeft === 0 → 「今日到期」(reuse badgeToday)
+     *   - daysLeft > 7   → 「剩 N 天」(warrantyDaysLeft)
+     *   - 1-7 天（urgent）→ 「即将过保」(warrantyExpiringSoon，v2.6.7 与订阅「即将到期」措辞区分)
+     *   - daysLeft === 0 → 「今日过保」(badgeWarrantyToday，v2.6.7 由「今日到期」改口径)
      *   - daysLeft < 0   → 「已过保」(warrantyExpiredBadge)
      * Returns null when no warranty date is set. Pure display helper — never writes to storage.
      */
@@ -16468,7 +16614,8 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
         const tier = formatRemainingBadge(daysLeft, 'subscription', (k, fb) => this._t(k, fb)).tier;
         let label;
         if (daysLeft < 0) label = this._t('warrantyExpiredBadge', '已过保');
-        else if (daysLeft === 0) label = this._t('badgeToday', '今日到期');
+        else if (daysLeft === 0) label = this._t('badgeWarrantyToday', '今日过保');
+        else if (daysLeft <= 7) label = this._t('warrantyExpiringSoon', '即将过保');
         else label = this._t('warrantyDaysLeft', '剩 {n} 天', { n: daysLeft });
         return { tier: tier, label: label, daysLeft: daysLeft };
     }
@@ -17819,7 +17966,7 @@ this.closeProductCard();
                 + row(this._t('formalNetAmount', '净成本'), formatAmountMinor(vm.projection.financials.netAmountMinor, asset.currency));
         const elapsedDays = Math.max(1, Math.floor((Date.now() - new Date((asset.acquiredOn || todayISO()) + 'T00:00:00Z').getTime()) / 86400000) + 1);
         const dailyAmount = asset.status === 'wishlist' ? null : Math.ceil(vm.projection.financials.netAmountMinor / elapsedDays);
-        const dailyRow = dailyAmount == null ? '' : row(this._t('formalDailyCost', '日均成本'), formatAmountMinor(dailyAmount, asset.currency));
+        const dailyRow = dailyAmount == null ? '' : row(this._t('formalDailyCost', '日均'), formatAmountMinor(dailyAmount, asset.currency));
         const importantRow = row(this._t('formalNextImportant', '下一重要日期'), text(vm.important && vm.important.date));
         const physicalDateRows = asset.kind === FORMAL_ASSET_KIND.PHYSICAL && asset.status !== 'wishlist'
             ? row(this._t('fieldPurchaseDate', '购买日期'), text(asset.acquiredOn)) + (asset.status === 'retired' ? row(this._t('fieldRetiredDate', '退役日期'), text(asset.statusChangedOn)) : '') : '';
@@ -17862,7 +18009,10 @@ const subscriptionAutoRenewChecked = asset.kind === FORMAL_ASSET_KIND.VIRTUAL_SU
             cover.innerHTML = this.renderAssetCoverContent(asset, '📦', 'am-product-card__cover-image', 'am-product-card__cover-fallback');
             formalDetailHeader.prepend(cover);
         }
-        node.onclick = event => { if (event.target === node) this.closeProductCard(); };
+        // v2.6.7：拖选备注等文本时，按下起点在卡内、松点落在遮罩上，click 事件会派发到
+        // 共同祖先（遮罩）导致卡片误关。记录按下起点，只有起点也在遮罩上时「点空白关闭」才生效。
+        node.addEventListener('mousedown', event => { node._amPressStartedOnMask = event.target === node; });
+        node.onclick = event => { if (event.target === node && node._amPressStartedOnMask !== false) this.closeProductCard(); };
         host.appendChild(node);
         this._productCardHost = host;
         node.querySelector('[data-formal-detail-close]').onclick = () => this.closeProductCard();
@@ -19765,13 +19915,17 @@ closeProductCard() {
         }
         const expiryOn = projection.expiryOn || (vm.important && vm.important.date) || null;
         const subState = projection.subscription && projection.subscription.state;
-        const badgeHtml = this._formalExpiryBadgeHtml(expiryOn, subState);
+        // v2.6.7：传 kind 供徽章区分实物保修（过保）与订阅（到期）文案。
+        const badgeHtml = this._formalExpiryBadgeHtml(expiryOn, subState, asset.kind);
         // 需求5：状态点派生 retired > expired > active。过期判定复用上方 expiryOn（projection.expiryOn 或
         // vm.important 兜底——实物 projection.expiryOn 恒为 null，其保修截止日经 getFormalNextImportantDate
-        // 的 warranty 兜底进入 expiryOn，故实物「保修过期→灰点」按字面规格生效）。
+        // 的 warranty 兜底进入 expiryOn）。
+        // v2.6.7：灰点口径收紧——灰色只表达「退役」（含过期订阅视同退役的 v2.6.6 口径）。
+        // 实物过保不算退役：保修日虽进 expiryOn，但不再据此把实物圆点变灰，过保产品保持彩色圆点
+        // （过期信息由卡片上灰色「已过保」徽章表达）。
         // pendingConfirmation 不算过期（保留蓝点 + 黄色「待续订」徽章）。虚拟订阅过期同样灰点。
         let dotState = asset.status === 'retired' ? 'retired' : (isWishlist ? 'wishlist' : 'active');
-        if (dotState === 'active') {
+        if (dotState === 'active' && asset.kind !== FORMAL_ASSET_KIND.PHYSICAL) {
             const expiryDays = expiryOn ? daysUntil(expiryOn, todayISO()) : null;
             const isExpired = subState === 'expired'
                 || (subState !== 'pendingConfirmation' && expiryDays != null && Number.isFinite(expiryDays) && expiryDays < 0);
@@ -19797,8 +19951,11 @@ closeProductCard() {
 
     /** 到期徽章（列表/矩阵卡内联兜底，算法等价 concat.js 解构的 formatRemainingBadge）。无到期 / 非法日期返回空串。
      *  需求3（D4）：订阅 pendingConfirmation（开了自动续费、到期未确认续订）显示黄色「待续订」；复用现有 soon 黄色档，不新增 CSS tier。
-     *  v2.6.6：过期档（daysLeft<0 或订阅投影 state=expired）改渲染灰色「已过期」徽章（过期=退役口径，卡上需可见标识），配合首页「已退役」分组。 */
-    _formalExpiryBadgeHtml(expiryOn, subState) {
+     *  v2.6.6：过期档（daysLeft<0 或订阅投影 state=expired）改渲染灰色「已过期」徽章（过期=退役口径，卡上需可见标识），配合首页「已退役」分组。
+     *  v2.6.7：实物保修到期（kind=physical，保修日经 important 兜底进 expiryOn）改用「过保」措辞
+     *  （今日过保 / N 天后过保），与订阅的「到期」文案区分；过期档实物同样改「已过保」，
+     *  订阅维持「已过期」。 */
+    _formalExpiryBadgeHtml(expiryOn, subState, kind) {
         if (!expiryOn) return '';
         if (subState === 'pendingConfirmation') {
             return `<span class="am-card-badge am-card-badge--soon">${escapeHtml(this._t('badgePendingRenewal', '待续订'))}</span>`;
@@ -19807,14 +19964,20 @@ closeProductCard() {
         if (!Number.isFinite(daysLeft)) return '';
         // v2.6.6：过期订阅归入首页「已退役」分组后，卡上补灰色「已过期」徽章
         // （此前仅灰点无文字），用户无需靠分割线猜测归类原因。
+        // v2.6.7：实物保修过期改「已过保」（warrantyExpiredBadge），与订阅「已过期」区分；
+        // 实物 subState 恒为 null，此处只会因 daysLeft < 0 进入。
         if (daysLeft < 0 || subState === 'expired') {
-            return `<span class="am-card-badge am-card-badge--expired">${escapeHtml(this._t('badgeExpired', '已过期'))}</span>`;
+            const expiredLabel = kind === FORMAL_ASSET_KIND.PHYSICAL
+                ? this._t('warrantyExpiredBadge', '已过保')
+                : this._t('badgeExpired', '已过期');
+            return `<span class="am-card-badge am-card-badge--expired">${escapeHtml(expiredLabel)}</span>`;
         }
+        const isWarranty = kind === FORMAL_ASSET_KIND.PHYSICAL;
         let tier, label;
-        if (daysLeft === 0) { tier = 'urgent'; label = this._t('badgeToday', '今日到期'); }
-        else if (daysLeft <= 7) { tier = 'urgent'; label = daysLeft + ' ' + this._t('badgeDaysLeft', '天后到期'); }
-        else if (daysLeft <= 30) { tier = 'soon'; label = daysLeft + ' ' + this._t('badgeDaysLeft', '天后到期'); }
-        else { tier = 'normal'; label = daysLeft + ' ' + this._t('badgeDaysLeft', '天后到期'); }
+        if (daysLeft === 0) { tier = 'urgent'; label = isWarranty ? this._t('badgeWarrantyToday', '今日过保') : this._t('badgeToday', '今日到期'); }
+        else if (daysLeft <= 7) { tier = 'urgent'; label = daysLeft + ' ' + (isWarranty ? this._t('badgeWarrantyDaysLeft', '天后过保') : this._t('badgeDaysLeft', '天后到期')); }
+        else if (daysLeft <= 30) { tier = 'soon'; label = daysLeft + ' ' + (isWarranty ? this._t('badgeWarrantyDaysLeft', '天后过保') : this._t('badgeDaysLeft', '天后到期')); }
+        else { tier = 'normal'; label = daysLeft + ' ' + (isWarranty ? this._t('badgeWarrantyDaysLeft', '天后过保') : this._t('badgeDaysLeft', '天后到期')); }
         return `<span class="am-card-badge am-card-badge--${escapeHtml(tier)}">${escapeHtml(label)}</span>`;
     }
 
@@ -19837,13 +20000,14 @@ closeProductCard() {
             const perUseHtml = data.perUseAmountMinor != null
                 ? ' · ' + escapeHtml(formatAmountMinor(data.perUseAmountMinor, asset.currency)) + escapeHtml(this._t('cardPerUseUnit', '/次'))
                 : '';
-            bottomLeftHtml = `<div class="am-asset-item__daily"><span class="am-asset-item__daily-text">${escapeHtml(remainingLabel)}${perUseHtml}</span></div>`;
+            // v2.6.7：次数权益数字改浅色（--muted），与其他卡片底部辅助信息同色调。
+            bottomLeftHtml = `<div class="am-asset-item__daily"><span class="am-asset-item__daily-text am-asset-item__daily-text--muted">${escapeHtml(remainingLabel)}${perUseHtml}</span></div>`;
         } else if (isPrepaidAmount) {
             const balanceLabel = this._t('cardPrepaidRemainingAmount', '剩余 {amount}').replace('{amount}', formatAmountMinor(Number(data.balanceAmountMinor) || 0, asset.currency));
             bottomLeftHtml = `<div class="am-asset-item__daily"><span class="am-asset-item__daily-text">${escapeHtml(balanceLabel)}</span></div>`;
         } else {
             // v2.1：有目标日均价时左侧日均成本仍要显示（与右下目标进度并存，不再替换）
-            const dailyLabel = escapeHtml(this._t('formalDailyCost', '日均成本'));
+            const dailyLabel = escapeHtml(this._t('formalDailyCost', '日均'));
             const perDay = escapeHtml(this._t('daysUnit', '天'));
             const dailyValue = data.dailyMinor == null ? '—' : escapeHtml(formatAmountMinor(data.dailyMinor, asset.currency)) + '/' + perDay;
             bottomLeftHtml = `<div class="am-asset-item__daily"><span class="am-card-daily-icon">📈</span><span class="am-asset-item__daily-label">${dailyLabel}</span><span class="am-asset-item__daily-text">${dailyValue}</span></div>`;
@@ -21130,13 +21294,15 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
             // value survives; otherwise it mirrors the purchase cost.
             const prepaidInitialAmountMajor = existing ? minorToMajorString(openingAmountMinor, prepaidCurrency) : (draft.initialAmount != null && draft.initialAmount !== '' ? String(draft.initialAmount) : prepaidCostMajor);
             const prepaidRemainingAmountMajor = existing ? minorToMajorString(projectedBalanceMinor, prepaidCurrency) : prepaidCostMajor;
-            const prepaidInitialCountValue = existing ? openingCountValue : (asset.openingCount != null ? Number(asset.openingCount) : 0);
+            // v2.6.7：新建无预填时初始/剩余次数默认空串 + placeholder「0」——与金额输入
+            // （value='' + placeholder="0.00" 浅灰占位）视觉一致，不再显示深色实体「0」。
+            const prepaidInitialCountValue = existing ? openingCountValue : (asset.openingCount != null ? Number(asset.openingCount) : '');
             const prepaidRemainingCountValue = existing ? projectedRemaining : prepaidInitialCountValue;
             const prepaidKindBodyHtml = isPrepaidKind
                 ? `<div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('prepaidKindTitle', '权益类型'))}</span><span class="am-type-pill-row am-type-pill-row--inline" data-type-pill-row><button type="button" class="am-type-pill${switchKindDisabledClass}" data-switch-kind="prepaidAmount" aria-pressed="${currentKind === 'prepaidAmount'}"${switchKindLockedTitle}${switchKindDisabledAttr}>${escapeHtml(this._t('formTypeAmount', '金额储值'))}</button><button type="button" class="am-type-pill${switchKindDisabledClass}" data-switch-kind="prepaidCount" aria-pressed="${currentKind === 'prepaidCount'}"${switchKindLockedTitle}${switchKindDisabledAttr}>${escapeHtml(this._t('formTypeCount', '次数权益'))}</button></span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldCost', '购买成本'))}</span><span class="am-fpc1-row__value am-virtual-price-cell">${this._renderGlassSelectCell('currency', prepaidCurrency, this._glassCurrencyOptions(prepaidCurrency), { disabled: !!(existing || wishCurrencyLocked) })}<input class="am-form-row__amount" name="amount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" value="${escapeHtml(prepaidCostMajor)}"></span></div></div></div>`
                 + (isAmount
                     ? `<div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldInitialAmount', '初始金额'))}</span><span class="am-fpc1-row__value">${existing ?`<input class="am-fpc1-row__value" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" value="${escapeHtml(prepaidInitialAmountMajor)}" readonly data-prepaid-initial-amount>`:`<input class="am-fpc1-row__value" name="initialAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" value="${escapeHtml(prepaidInitialAmountMajor)}" data-prepaid-initial-amount>`}</span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldRemainingAmount', '剩余金额'))}</span><span class="am-fpc1-row__value">${existing ?`<input class="am-fpc1-row__value" name="targetRemainingAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" value="${escapeHtml(prepaidRemainingAmountMajor)}" data-original-remaining-minor="${projectedBalanceMinor}">`:`<input class="am-fpc1-row__value" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" value="${escapeHtml(prepaidRemainingAmountMajor)}" readonly data-prepaid-remaining-amount>`}</span></div></div></div>`
-                    : `<div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldInitialCount', '初始次数'))}</span><span class="am-fpc1-row__value">${existing ?`<input class="am-fpc1-row__value" type="number" min="0" step="1" value="${escapeHtml(String(prepaidInitialCountValue))}" readonly>`:`<input class="am-fpc1-row__value" name="openingCount" type="number" min="0" step="1" value="${escapeHtml(String(prepaidInitialCountValue))}" data-prepaid-initial-count>`}</span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldRemainingCount', '剩余次数'))}</span><span class="am-fpc1-row__value">${existing ?`<input class="am-fpc1-row__value" name="targetRemainingCount" type="number" min="0" step="1" value="${escapeHtml(String(prepaidRemainingCountValue))}">`:`<input class="am-fpc1-row__value" name="initialRemainingCount" type="number" min="0" step="1" value="${escapeHtml(String(prepaidRemainingCountValue))}" data-prepaid-remaining-count>`}</span></div></div></div>`)
+                    : `<div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldInitialCount', '初始次数'))}</span><span class="am-fpc1-row__value">${existing ?`<input class="am-fpc1-row__value" type="number" min="0" step="1" value="${escapeHtml(String(prepaidInitialCountValue))}" readonly>`:`<input class="am-fpc1-row__value" name="openingCount" type="number" min="0" step="1" placeholder="0" value="${escapeHtml(String(prepaidInitialCountValue))}" data-prepaid-initial-count>`}</span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldRemainingCount', '剩余次数'))}</span><span class="am-fpc1-row__value">${existing ?`<input class="am-fpc1-row__value" name="targetRemainingCount" type="number" min="0" step="1" value="${escapeHtml(String(prepaidRemainingCountValue))}">`:`<input class="am-fpc1-row__value" name="initialRemainingCount" type="number" min="0" step="1" placeholder="0" value="${escapeHtml(String(prepaidRemainingCountValue))}" data-prepaid-remaining-count>`}</span></div></div></div>`)
                 + `<div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldAcquiredOn', '开通日期'))}</span><span class="am-fpc1-row__value am-fpc1-row__value--date am-datepicker-cell" data-am-datepicker="acquiredOn" data-am-shortcuts="today"><input type="hidden" name="acquiredOn" value="${escapeHtml(asset.acquiredOn || todayISO())}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(asset.acquiredOn || this._t('datePickerPlaceholder', '选择日期'))}</button></span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldExpiresOn', '有效期'))}</span><span class="am-fpc1-row__value am-fpc1-row__value--date am-datepicker-cell" data-am-datepicker="expiresOn" data-am-shortcuts="today"><input type="hidden" name="expiresOn" value="${escapeHtml(details.expiresOn || '')}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(details.expiresOn || this._t('datePickerPlaceholder', '选择日期'))}</button></span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldProvider', '商户名称'))}</span><input class="am-fpc1-row__value" type="text" name="provider" value="${escapeHtml(details.provider || '')}" placeholder="${escapeHtml(this._t('merchantEmpty', '未填写商户'))}"></div></div></div><div class="am-form-hint" hidden>${escapeHtml(this._t('formPrepaidHint', '预付权益包含储值卡与次卡，可在下方切换。'))}</div>`
                 : '';
             // Legacy prepaidSectionHtml is intentionally empty: prepaid now uses the card
