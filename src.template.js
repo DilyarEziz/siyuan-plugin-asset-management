@@ -8291,13 +8291,16 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
                 const lineHeight = parseFloat(ts.lineHeight) || 18;
                 const scrollerRect = scroller.getBoundingClientRect();
                 const taRect = textarea.getBoundingClientRect();
-                const caretYInScroller = taRect.top + caretYInTextarea - scroller.scrollTop;
+                // 光标的视口 Y = textarea 视口顶 + 光标在 textarea 内的 Y（autoGrow 后 textarea 不自滚）
+                // 坐标系全程用视口坐标，与 scrollerRect 比较；绝不掺入 scrollTop（内容坐标），否则
+                // 滚动越深偏差越大，一输入就被误判「光标在可视区外」导致界面大幅跳动。
+                const caretViewportY = taRect.top + caretYInTextarea - (textarea.scrollTop || 0);
                 const visibleTop = scrollerRect.top;
                 const visibleBottom = scrollerRect.bottom - reserve;
-                if (caretYInScroller > visibleBottom) {
-                    scroller.scrollTop += caretYInScroller - visibleBottom + lineHeight;
-                } else if (caretYInScroller < visibleTop) {
-                    scroller.scrollTop -= visibleTop - caretYInScroller + lineHeight;
+                if (caretViewportY > visibleBottom) {
+                    scroller.scrollTop += caretViewportY - visibleBottom + lineHeight;
+                } else if (caretViewportY < visibleTop) {
+                    scroller.scrollTop -= visibleTop - caretViewportY + lineHeight;
                 }
             } catch (_) { /* 光标跟随属体验增强，失败不影响输入 */ }
         };
