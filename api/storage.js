@@ -466,11 +466,15 @@ function assertFormalOperationLog(record, path, owned, wishlistIds, tagsById, di
     }
     // physical-retire / physical-sale (retirePhysicalAsset / recordPhysicalSaleAsset) and
     // subscription-auto-renew-toggle (toggleSubscriptionAutoRenew) carry raw oldValue/newValue.
+    // v2.6.8：subscription-period-delete（deleteSubscriptionPeriod，oldValue 为周期记录）
+    // 收录；prepaid-delete 补录——deleteFormalWorkflowRecord('prepaid') 一直会写该 type，
+    // 此前缺失导致删除预付流水事务必然失败（operationLogs[].type is invalid）。
     const ordinary = ['add', 'update', 'set-status', 'restore', 'status-restore',
         'subscription-renew', 'subscription-cancel', 'subscription-skip', 'subscription-reopen', 'subscription-auto-renew-toggle',
         'physical-retire', 'physical-sale',
         'maintenance-add', 'maintenance-delete', 'usage-add', 'usage-delete',
-        'prepaid-inflow', 'prepaid-outflow', 'prepaid-refund', 'prepaid-adjust'];
+        'prepaid-inflow', 'prepaid-outflow', 'prepaid-refund', 'prepaid-adjust', 'prepaid-delete',
+        'subscription-period-delete'];
     const purchase = record.type === 'wishlist-to-active' || record.type === 'wishlist-purchase';
     const tagOperation = record.type === 'tag-create' || record.type === 'tag-delete';
     const tagStyleUpdate = record.type === 'tag-update';

@@ -1953,7 +1953,9 @@ function getFormalExpiryOn(asset, periods, today) {
     if (a.status === ASSET_STATUS.WISHLIST) return null;
     if (a.kind === FORMAL_ASSET_KIND.PREPAID_AMOUNT || a.kind === FORMAL_ASSET_KIND.PREPAID_COUNT) return a.details.expiresOn;
     if (a.kind !== FORMAL_ASSET_KIND.VIRTUAL_SUBSCRIPTION) return null;
-    const projection = projectFormalSubscription(a, periods, today);
+    const date = formalToday(today);
+    const projection = projectFormalSubscription(a, periods, date);
+    if (projection.latestPeriod && projection.latestPeriod.startDate > date) return projection.latestPeriod.endDate;
     return projection.currentPeriod ? projection.currentPeriod.endDate : (projection.latestPeriod ? projection.latestPeriod.endDate : null);
 }
 function getFormalNextImportantDate(asset, periods, today) {

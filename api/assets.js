@@ -1061,7 +1061,11 @@ function getFormalExpiryOn(asset, periods, today) {
     if (a.status === ASSET_STATUS.WISHLIST) return null;
     if (a.kind === FORMAL_ASSET_KIND.PREPAID_AMOUNT || a.kind === FORMAL_ASSET_KIND.PREPAID_COUNT) return a.details.expiresOn;
     if (a.kind !== FORMAL_ASSET_KIND.VIRTUAL_SUBSCRIPTION) return null;
-    const projection = projectFormalSubscription(a, periods, today);
+    const date = formalToday(today);
+    const projection = projectFormalSubscription(a, periods, date);
+    // v2.6.8：已提前续订（最新周期 startDate 晚于今天）→ 到期日取最新周期 endDate。
+    // 此前返回当期（旧）endDate，卡片 / 提醒 / 排序在续订后仍按旧结束日展示，用户视角等于没续上。
+    if (projection.latestPeriod && projection.latestPeriod.startDate > date) return projection.latestPeriod.endDate;
     return projection.currentPeriod ? projection.currentPeriod.endDate : (projection.latestPeriod ? projection.latestPeriod.endDate : null);
 }
 /**

@@ -612,7 +612,7 @@
 const { Plugin, Dialog, Menu, openTab, openMobileFileById } = require("siyuan");
 
 const DOCK_TYPE = "asset-management-dock";
-const PLUGIN_VERSION = "2.6.7";
+const PLUGIN_VERSION = "2.6.8";
 const AUTHOR_URL = "https://ld246.com/member/Dilyar";
 const ICONS8_URL = "https://icons8.com";
 
@@ -3016,6 +3016,95 @@ _getDeleteSidecarSnapshotForAsset(sidecarSnapshot, assetId) {
     }
 
     /**
+     * v2.6.8（续订周期可编辑）：按 periodId 编辑任意一期订阅周期的 startDate / endDate。
+     *   - void-and-replace 该周期记录：新周期沿用 kind / paymentEventId，仅替换起止日期；
+     *   - 校验：日期格式、startDate <= endDate，且重跑 validateSubscriptionPeriodsNoOverlap
+     *     （失败即 throw 回滚，数据无变更）——相邻周期只允许相邻不允许重叠，允许出现空档；
+     *   - 不修改资产主实体、不修改付款事件（付款金额更正走 correctSubscriptionPaymentAmount，
+     *     首期开始日期重锚 + acquiredOn 同步走 updateSubscriptionStartDate）；
+     *   - 写 lifecycle（statusChanged/subscriptionPeriodDatesUpdated）+ opLog（type='update'，白名单合法）。
+     */
+    async updateSubscriptionPeriod(id, input) {
+        const dto = input || {};
+        const context = await this._commitAssetAuditMutation(snapshot => {
+            const asset = snapshot.assets.find(item => item.id === id);
+            if (!asset || asset.kind !== FORMAL_ASSET_KIND.VIRTUAL_SUBSCRIPTION || asset.status === 'wishlist') throw new Error('subscription asset is required');
+            const newStartDate = dto.startDate;
+            const newEndDate = dto.endDate;
+            if (typeof newStartDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(newStartDate)) throw new Error('invalid subscription period start date');
+            if (typeof newEndDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(newEndDate)) throw new Error('invalid subscription period end date');
+            if (newStartDate > newEndDate) throw new Error('subscription period end date must not be before its start date');
+            const target = (snapshot.subscriptionPeriods || []).find(item => item && item.assetId === asset.id && !item.voidedAt && item.id === dto.periodId);
+            if (!target) throw new Error('no subscription period to edit');
+            const now = new Date().toISOString();
+            const voided = Object.assign({}, target, { voidedAt: now });
+            const replacement = normalizeSubscriptionPeriodRecord({ id: createStableId(), assetId: asset.id, occurredAt: now, effectiveDate: newStartDate, createdAt: now, source: 'user', correlationId: null, note: '', metadata: {}, replacesEventId: target.id, voidedAt: null, kind: target.kind, startDate: newStartDate, endDate: newEndDate, paymentEventId: target.paymentEventId });
+            const nextPeriods = snapshot.subscriptionPeriods.map(item => item.id === target.id ? voided : item).concat(replacement);
+            const overlap = validateSubscriptionPeriodsNoOverlap(nextPeriods);
+            if (!overlap.valid) throw new Error('subscription period overlaps an existing billing period: ' + overlap.errors.join('; '));
+            const lifecycle = this._formalWorkflowLifecycle(asset.id, newStartDate, 'statusChanged', { action: 'subscriptionPeriodDatesUpdated', periodId: replacement.id, replacesPeriodId: target.id, fromStartDate: target.startDate, toStartDate: newStartDate, fromEndDate: target.endDate, toEndDate: newEndDate });
+            const opLog = this._newFormalOperationLog('update', asset, asset, asset, 'subscription.periodDates');
+            return {
+                assets: snapshot.assets,
+                subscriptionPeriods: nextPeriods,
+                lifecycleEvents: snapshot.lifecycleEvents.concat(lifecycle),
+                operationLogs: [opLog].concat(snapshot.operationLogs || []),
+                context: { asset: asset, period: replacement, replacedPeriodId: target.id }
+            };
+        });
+        this._runGuardedUiEffects({ renderDock: true, refreshModal: true });
+        return context && context.asset;
+    }
+
+    /**
+     * v2.6.8（误续订可删除）：删除最新一期订阅周期（撤销记错的续订）。
+     *   - 仅允许删除最新（startDate 最大）一期，且该资产至少存在 2 期 active 周期——
+     *     只剩一期时不存在「误续订」，改用编辑日期或删除整个资产；
+     *   - 周期记录硬删除（与 deleteFormalWorkflowRecord 维保 / 预付流水同口径），
+     *   - 关联付款事件置 voidedAt（金额投影 / 订阅累计支出随之回退）；
+     *     若该付款是 void-and-replace 链上的替换事件，需同步清空其 replacesEventId——
+     *     validateFinancialReplacementChain 要求「替换事件必须 active」，void 时保留
+     *     replacesEventId 会使链校验失败（correctSubscriptionPaymentAmount 同款愈合）；
+     *   - 写 lifecycle（statusChanged/subscriptionPeriodDeleted）+ opLog
+     *     （type='subscription-period-delete'，storage 白名单 v2.6.8 起收录）。
+     */
+    async deleteSubscriptionPeriod(id, periodId) {
+        const context = await this._commitAssetAuditMutation(snapshot => {
+            const asset = snapshot.assets.find(item => item.id === id);
+            if (!asset || asset.kind !== FORMAL_ASSET_KIND.VIRTUAL_SUBSCRIPTION || asset.status === 'wishlist') throw new Error('subscription asset is required');
+            const active = (snapshot.subscriptionPeriods || []).filter(item => item && item.assetId === asset.id && !item.voidedAt);
+            if (!active.length) throw new Error('no subscription period to delete');
+            if (active.length < 2) throw new Error('the only subscription period cannot be deleted; edit its dates or delete the asset instead');
+            active.sort((a, b) => a.startDate.localeCompare(b.startDate) || a.endDate.localeCompare(b.endDate));
+            const target = active[active.length - 1];
+            if (target.id !== periodId) throw new Error('only the latest subscription period can be deleted');
+            const now = new Date().toISOString();
+            const nextPeriods = snapshot.subscriptionPeriods.filter(item => !item || item.id !== target.id);
+            const payment = target.paymentEventId == null ? null
+                : (snapshot.financialEvents || []).find(event => event && event.id === target.paymentEventId);
+            const financialEvents = payment
+                ? snapshot.financialEvents.map(event => event.id === payment.id
+                    ? Object.assign({}, event, { voidedAt: now, replacesEventId: null })
+                    : event)
+                : snapshot.financialEvents;
+            const chain = validateFinancialReplacementChain(financialEvents);
+            if (!chain.valid) throw new Error('financial replacement chain is invalid: ' + chain.errors.join('; '));
+            const lifecycle = this._formalWorkflowLifecycle(asset.id, target.startDate, 'statusChanged', { action: 'subscriptionPeriodDeleted', periodId: target.id, startDate: target.startDate, endDate: target.endDate, paymentEventId: payment ? payment.id : null, amountMinor: payment ? payment.amountMinor : null });
+            const opLog = { id: createStableId(), type: 'subscription-period-delete', assetId: asset.id, assetName: asset.name, field: 'subscription.period', oldValue: target, newValue: null, ts: now };
+            return {
+                assets: snapshot.assets,
+                financialEvents: financialEvents,
+                subscriptionPeriods: nextPeriods,
+                lifecycleEvents: snapshot.lifecycleEvents.concat(lifecycle),
+                operationLogs: [opLog].concat(snapshot.operationLogs || []),
+                context: { asset: asset, deletedPeriodId: target.id, voidedPaymentEventId: payment ? payment.id : null }
+            };
+        });
+        this._runGuardedUiEffects({ renderDock: true, refreshModal: true });
+        return context && context.asset;
+    }
+
+    /**
      * 需求1（编辑金额，D1/D2 void-and-replace）：更正最近一期订阅付款金额。
      *   - 取该资产最新（effectiveDate/occurredAt 最大）的未 void subscriptionPayment 事件；
      *   - void-and-replace：旧事件标记 voidedAt，新建一条 subscriptionPayment（amountMinor=新值，
@@ -3781,6 +3870,39 @@ async deleteFormalWorkflowRecord(id, mode, recordId) {
 
     // v1.2：通用自定义日历绑定（除保修外），按 data-am-shortcuts 渲染快捷（today|none）。
     // HTML 模式：<span data-am-datepicker="NAME" data-am-shortcuts="today"><input type="hidden" name="NAME"><button data-am-date-trigger>...</button></span>
+    /**
+     * v2.6.8（手机端下拉选项无效）：浮动面板（玻璃下拉 / 日期面板）统一放置。
+     * 桌面上 trigger 下方 6px 通常放得下；手机端表单 sheet 是底部抽屉，trigger 常在
+     * 视口下半区，固定往下弹会把整个面板顶出屏幕外，看起来就是「下拉点了没反应」。
+     * 规则：
+     *   - 水平：右缘对齐 trigger，再钳制进视口（左右各留 8px），窄屏不横向溢出；
+     *   - 垂直：默认下方 6px；下方放不下且上方空间更大时整体翻到 trigger 上方；
+     *     都放不下时钳制进视口（贴底 / 贴顶），保证选项始终有可点区域；
+     *   - 重新定位（滚动 / 窗口与 visualViewport 尺寸变化，含软键盘弹出）都走本函数，
+     *     与 _bindAssetsTagDropdown 的键盘感知重定位同思路。
+     * 必须在 panel 挂载到 DOM 后调用（需要 offsetWidth / offsetHeight 实测尺寸）。
+     */
+    _placeAmFloatingPanel(panel, trigger) {
+        const vw = Number(window.innerWidth) || 0;
+        const vh = Number(window.innerHeight) || 0;
+        if (!vw || !vh || !trigger || !panel) return;
+        const tRect = trigger.getBoundingClientRect();
+        const pw = panel.offsetWidth || 0;
+        const ph = panel.offsetHeight || 0;
+        const margin = 8;
+        const gap = 6;
+        let right = Math.max(vw - tRect.right, margin);
+        right = Math.min(right, Math.max(vw - pw - margin, margin));
+        panel.style.right = Math.round(right) + 'px';
+        const spaceBelow = vh - margin - (tRect.bottom + gap);
+        const spaceAbove = tRect.top - gap - margin;
+        let top;
+        if (spaceBelow >= ph || spaceBelow >= spaceAbove) top = tRect.bottom + gap;
+        else top = tRect.top - gap - ph;
+        top = Math.min(Math.max(top, margin), Math.max(vh - ph - margin, margin));
+        panel.style.top = Math.round(top) + 'px';
+    }
+
     _bindAmDatepickers(kindBody) {
         const self = this;
         kindBody.querySelectorAll('[data-am-datepicker]').forEach((root) => {
@@ -3826,10 +3948,12 @@ async deleteFormalWorkflowRecord(id, mode, recordId) {
             };
             const repositionPanel = () => {
                 if (!panel || !trigger) return;
-                const tRect = trigger.getBoundingClientRect();
-                panel.style.top = (tRect.bottom + 6) + 'px';
-                panel.style.right = (window.innerWidth - tRect.right) + 'px';
+                self._placeAmFloatingPanel(panel, trigger);
             };
+            // v2.6.8：外点关闭改 pointerdown（无 PointerEvent 环境 fallback mousedown）——
+            // 触屏上 mousedown 是模拟事件，部分 WebView 场景不派发，导致点外部收不起面板；
+            // 与 _openItemMenu 的成熟做法一致。滚动 / 窗口 / 软键盘尺寸变化统一重定位。
+            const outsideEvent = (typeof window !== 'undefined' && 'PointerEvent' in window) ? 'pointerdown' : 'mousedown';
             const onDocMouseDown = (ev) => {
                 if (!panel) return;
                 if (panel.contains(ev.target) || trigger.contains(ev.target)) return;
@@ -3851,9 +3975,10 @@ async deleteFormalWorkflowRecord(id, mode, recordId) {
             const close = () => {
                 if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
                 panel = null;
-                document.removeEventListener('mousedown', onDocMouseDown, true);
+                document.removeEventListener(outsideEvent, onDocMouseDown, true);
                 document.removeEventListener('scroll', repositionPanel, true);
                 window.removeEventListener('resize', repositionPanel);
+                if (window.visualViewport) window.visualViewport.removeEventListener('resize', repositionPanel);
             };
             const pick = (iso) => {
                 hidden.value = iso;
@@ -3870,21 +3995,20 @@ async deleteFormalWorkflowRecord(id, mode, recordId) {
                 year = parts[0] || today.getFullYear();
                 month = (parts[1] || 1) - 1;
                 viewMode = 'days';
-                const tRect = trigger.getBoundingClientRect();
                 panel = document.createElement('div');
                 panel.className = 'am-datepicker';
                 panel.setAttribute('data-datepicker-panel', '');
                 panel.innerHTML = render();
                 panel.addEventListener('mousedown', (ev) => ev.stopPropagation());
                 panel.style.position = 'fixed';
-                panel.style.top = (tRect.bottom + 6) + 'px';
-                panel.style.right = (window.innerWidth - tRect.right) + 'px';
-                panel.style.left = 'auto';
                 panel.style.zIndex = '99999';
                 document.body.appendChild(panel);
-                document.addEventListener('mousedown', onDocMouseDown, true);
+                // v2.6.8：挂载后统一放置（视口钳制 + 空间不足翻上方），手机端不再弹出屏幕外。
+                self._placeAmFloatingPanel(panel, trigger);
+                document.addEventListener(outsideEvent, onDocMouseDown, true);
                 document.addEventListener('scroll', repositionPanel, true);
                 window.addEventListener('resize', repositionPanel);
+                if (window.visualViewport) window.visualViewport.addEventListener('resize', repositionPanel);
                 bindPanel();
             };
             trigger.onclick = (ev) => { ev.preventDefault(); open(); };
@@ -3963,10 +4087,11 @@ async deleteFormalWorkflowRecord(id, mode, recordId) {
             }).join('');
             const repositionPanel = () => {
                 if (!panel || !trigger) return;
-                const tRect = trigger.getBoundingClientRect();
-                panel.style.top = (tRect.bottom + 6) + 'px';
-                panel.style.right = (window.innerWidth - tRect.right) + 'px';
+                self._placeAmFloatingPanel(panel, trigger);
             };
+            // v2.6.8：外点关闭改 pointerdown（fallback mousedown）——触屏模拟 mousedown
+            // 不可靠；滚动 / 窗口 / 软键盘尺寸变化统一重定位（同 datepicker）。
+            const outsideEvent = (typeof window !== 'undefined' && 'PointerEvent' in window) ? 'pointerdown' : 'mousedown';
             const onDocMouseDown = (ev) => {
                 if (!panel) return;
                 if (panel.contains(ev.target) || trigger.contains(ev.target)) return;
@@ -3987,10 +4112,11 @@ async deleteFormalWorkflowRecord(id, mode, recordId) {
                 trigger.classList.remove('is-open');
                 if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
                 panel = null;
-                document.removeEventListener('mousedown', onDocMouseDown, true);
+                document.removeEventListener(outsideEvent, onDocMouseDown, true);
                 document.removeEventListener('keydown', onDocKeydown, true);
                 document.removeEventListener('scroll', repositionPanel, true);
                 window.removeEventListener('resize', repositionPanel);
+                if (window.visualViewport) window.visualViewport.removeEventListener('resize', repositionPanel);
                 const idx = self._amGlassSelectCloseFns.indexOf(close);
                 if (idx >= 0) self._amGlassSelectCloseFns.splice(idx, 1);
             };
@@ -4009,7 +4135,6 @@ async deleteFormalWorkflowRecord(id, mode, recordId) {
                 if (trigger.disabled || trigger.classList.contains('is-disabled')) return; // v2.4.1：锁定态不弹层
                 if (panel) { close(); return; }
                 self._closeAmGlassSelectPanels(); // 同一时刻只开一个
-                const tRect = trigger.getBoundingClientRect();
                 panel = document.createElement('div');
                 panel.className = 'am-glass-select-popover';
                 panel.setAttribute('data-glass-select-panel', '');
@@ -4017,16 +4142,16 @@ async deleteFormalWorkflowRecord(id, mode, recordId) {
                 panel.innerHTML = renderOptions();
                 panel.addEventListener('mousedown', (ev) => ev.stopPropagation());
                 panel.style.position = 'fixed';
-                panel.style.top = (tRect.bottom + 6) + 'px';
-                panel.style.right = (window.innerWidth - tRect.right) + 'px';
-                panel.style.left = 'auto';
                 panel.style.zIndex = '99999';
                 document.body.appendChild(panel);
+                // v2.6.8：挂载后统一放置（视口钳制 + 空间不足翻上方），手机端不再弹出屏幕外。
+                self._placeAmFloatingPanel(panel, trigger);
                 trigger.classList.add('is-open');
-                document.addEventListener('mousedown', onDocMouseDown, true);
+                document.addEventListener(outsideEvent, onDocMouseDown, true);
                 document.addEventListener('keydown', onDocKeydown, true);
                 document.addEventListener('scroll', repositionPanel, true);
                 window.addEventListener('resize', repositionPanel);
+                if (window.visualViewport) window.visualViewport.addEventListener('resize', repositionPanel);
                 self._amGlassSelectCloseFns.push(close);
                 bindPanel();
             };
@@ -7614,6 +7739,7 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
             'wishlist-purchase': ['opLogTypeWishlistToActive', '种草转正'],
             'wishlist-abandon': ['opLogTypeWishlistAbandon', '拔草'],
             'subscription-renew': ['opLogTypeSubscriptionRenew', '订阅续订'],
+            'subscription-period-delete': ['opLogTypeSubscriptionPeriodDelete', '删除续订周期'],
             'subscription-auto-renew-toggle': ['opLogTypeSubscriptionAutoRenewToggle', '自动续费切换'],
             'prepaid-opening': ['opLogTypePrepaidOpening', '预付开卡'],
             'prepaid-inflow': ['opLogTypePrepaidInflow', '预付充值'],
@@ -9252,6 +9378,10 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
                 .slice()
                 .sort((a, b) => String(b.startDate || '').localeCompare(String(a.startDate || '')));
             const finById = new Map((Array.isArray(domain.financialEvents) ? domain.financialEvents : []).map(event => [event.id, event]));
+            // v2.6.8：订阅历程逐期操作——每期可改起止日期；最新一期（首行）且共 ≥2 期时
+            // 额外给「删除」（撤销误录入的续订；仅剩一期不存在误续订，不给删除入口）。
+            const latestPeriodId = periods.length ? periods[0].id : null;
+            const canDeleteLatest = periods.length >= 2;
             const timelineHtml = periods.length
                 ? `<div class="am-product-timeline">${periods.map(period => {
                     const rawKind = period.kind || '';
@@ -9259,7 +9389,12 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
                     const kindLabel = this._t(kindKey, rawKind || '—');
                     const payEvent = period.paymentEventId ? finById.get(period.paymentEventId) : null;
                     const amountHtml = payEvent && Number.isSafeInteger(payEvent.amountMinor) ? `<span class="am-product-timeline__amount">${fmt(payEvent.amountMinor)}</span>` : '';
-                    return `<div class="am-product-timeline__item"><span class="am-product-timeline__dot"></span><div class="am-product-timeline__main"><div class="am-product-timeline__range">${escapeHtml(period.startDate || '—')} ~ ${escapeHtml(period.endDate || '—')}</div><div class="am-product-timeline__meta"><span class="am-product-timeline__kind">${escapeHtml(kindLabel)}</span>${amountHtml}</div></div></div>`;
+                    const isLatest = period.id === latestPeriodId;
+                    const actionsHtml = `<span class="am-product-timeline__actions">`
+                        + `<button type="button" class="am-product-timeline__action" data-period-edit="${escapeHtml(period.id)}" aria-label="${escapeHtml(this._t('subscriptionPeriodEdit', '编辑本期'))}">${escapeHtml(this._t('subscriptionPeriodEditBtn', '编辑'))}</button>`
+                        + (isLatest && canDeleteLatest ? `<button type="button" class="am-product-timeline__action am-product-timeline__action--danger" data-period-delete="${escapeHtml(period.id)}" aria-label="${escapeHtml(this._t('subscriptionPeriodDelete', '删除本期'))}">${escapeHtml(this._t('subscriptionPeriodDeleteBtn', '删除'))}</button>` : '')
+                        + `</span>`;
+                    return `<div class="am-product-timeline__item"><span class="am-product-timeline__dot"></span><div class="am-product-timeline__main"><div class="am-product-timeline__range">${escapeHtml(period.startDate || '—')} ~ ${escapeHtml(period.endDate || '—')}${isLatest ? `<span class="am-product-timeline__latest">${escapeHtml(this._t('subscriptionPeriodLatest', '最新'))}</span>` : ''}</div><div class="am-product-timeline__meta"><span class="am-product-timeline__kind">${escapeHtml(kindLabel)}</span>${amountHtml}${actionsHtml}</div></div></div>`;
                 }).join('')}</div>`
                 : `<div class="am-product-empty-bar">${escapeHtml(this._t('subscriptionEmpty', '暂无订阅周期记录'))}</div>`;
             historySection = `<section class="am-product-section"><div class="am-product-section__title">${escapeHtml(this._t('subscriptionPeriods', '订阅历程'))}</div>${timelineHtml}</section>`;
@@ -10247,6 +10382,32 @@ const subscriptionAutoRenewChecked = asset.kind === FORMAL_ASSET_KIND.VIRTUAL_SU
         workflow('[data-formal-renew]', () => this.openRenewSheet(asset.id, host));
         // v2.4.1 阶段3：种草详情卡「更新价格」入口（仅 wishlist 渲染该按钮），sheet 与详情卡同 host。
         workflow('[data-wishlist-update-price]', () => this.openWishlistPriceSheet(asset.id, host));
+        // v2.6.8：订阅历程「编辑」逐期入口——打开周期日期编辑 sheet（与详情卡同 host）。
+        node.querySelectorAll('[data-period-edit]').forEach(button => {
+            button.onclick = () => this.openSubscriptionPeriodSheet(asset.id, button.dataset.periodEdit, host);
+        });
+        // v2.6.8：订阅历程「删除」入口（仅最新一期渲染）——二次确认后撤销该期续订，
+        // 同事务作废其付款事件，成功后原 host 重开详情卡刷新到期日 / 金额投影。
+        node.querySelectorAll('[data-period-delete]').forEach(button => {
+            button.onclick = () => {
+                this._openScopedConfirm(host, {
+                    title: this._t('subscriptionPeriodDeleteTitle', '删除这期续订'),
+                    text: this._t('subscriptionPeriodDeleteConfirm', '确认删除这期订阅周期？这一期的付款金额会一并作废，净成本与日均成本随之回退，操作会记入操作日志。'),
+                    onConfirm: async () => {
+                        button.disabled = true;
+                        try {
+                            await this.deleteSubscriptionPeriod(asset.id, button.dataset.periodDelete);
+                            this.showToast('✓ ' + this._t('subscriptionPeriodDeleted', '订阅周期已删除'));
+                            this.closeProductCard();
+                            this.openFormalProductCard(asset.id, host);
+                        } catch (error) {
+                            button.disabled = false;
+                            this.showToast('⚠️ ' + (error && error.message ? error.message : 'delete failed'));
+                        }
+                    },
+                });
+            };
+        });
         // v2.4.2：种草详情卡「心动值」section——大按钮/撤销 pill 均为闭包直绑（v0.14 教训：不走委托）。
         this._bindWishlistHeartbeatSection(node, asset.id, host);
         // v2.4.1 追加：价格趋势区「更新记录」逐条删除（更正误输入）；删除前插件范围内二次确认，
@@ -14793,6 +14954,90 @@ openMaintenanceSheet(id, preferredHost) { return this.openFormalWorkflowDialog(i
                 submitting = false;
                 if (saveButton) { saveButton.disabled = false; saveButton.setAttribute('aria-busy', 'false'); }
                 this.showToast('⚠️ ' + (error && error.message ? error.message : 'renew failed'));
+            }
+        };
+        host.appendChild(mask);
+        window.addEventListener('keydown', onKeydown, KEYDOWN_CAPTURE_OPTS);
+        return mask;
+    }
+
+    /**
+     * v2.6.8（续订周期可编辑）：单期订阅周期日期编辑 sheet。
+     *   - 结构与 openWishlistPriceSheet / openRenewSheet 同款液态玻璃小 sheet
+     *     （am-edit-sheet-mask.am-workflow-sheet-mask > am-edit-sheet.am-form-shell），
+     *     host 解析与续费 sheet 一致（preferredHost 优先 → 与详情卡同 host 同 stacking context）；
+     *   - 两个日期行（开始日期 / 到期日）均用 am-datepicker-cell + hidden input，
+     *     预填该期当前起止；保存走 updateSubscriptionPeriod 域方法（void-and-replace +
+     *     全量重叠校验，失败 throw → toast，输入保留）；
+     *   - 成功：toast 后关闭 sheet，closeProductCard + openFormalProductCard(id, host)
+     *     原 host 重开详情卡，使到期日 / 订阅历程立即反映新日期。
+     */
+    openSubscriptionPeriodSheet(id, periodId, preferredHost) {
+        const asset = (this.assets || []).find(item => item && item.id === id);
+        if (!asset || asset.kind !== FORMAL_ASSET_KIND.VIRTUAL_SUBSCRIPTION) throw new Error('subscription asset is required');
+        const period = (this._subscriptionPeriods || []).find(item => item && item.id === periodId && item.assetId === id && !item.voidedAt);
+        if (!period) throw new Error('subscription period not found');
+        const host = preferredHost || this._productCardHost || this.dockElement || this._modalContainer || this._pluginOverlayRoot || document.body;
+        const defaultStartDate = period.startDate || todayISO();
+        const defaultEndDate = period.endDate || defaultStartDate;
+        // 金额行仅展示该期关联付款（只读上下文，改金额走「编辑设置」/价格修正入口）。
+        const payEvent = period.paymentEventId == null ? null
+            : (this._financialEvents || []).find(event => event && event.id === period.paymentEventId && !event.voidedAt);
+        const amountText = payEvent && Number.isSafeInteger(payEvent.amountMinor)
+            ? formatAmountMinor(payEvent.amountMinor, asset.currency || 'CNY')
+            : this._t('subscriptionPeriodNoPayment', '无付款记录');
+        const mask = document.createElement('div'); mask.className = 'am-edit-sheet-mask am-workflow-sheet-mask';
+        mask.innerHTML = `<div class="am-edit-sheet am-form-shell am-period-edit-sheet"><div class="am-edit-sheet__grabber"></div><header class="am-edit-sheet__header am-form-shell__header"><button type="button" class="am-edit-sheet__close" data-close aria-label="${escapeHtml(this._t('btnClose', '关闭'))}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button><h2 class="am-edit-sheet__title">${escapeHtml(this._t('subscriptionPeriodEditTitle', '编辑订阅周期'))}</h2><span class="am-form-shell__header-spacer"></span></header><form data-period-form data-form><div class="am-edit-sheet__body am-form-shell__body"><div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldStartDate', '开始日期'))}</span><span class="am-fpc1-row__value am-fpc1-row__value--date am-datepicker-cell" data-am-datepicker="startDate" data-am-shortcuts="today"><input type="hidden" name="startDate" value="${escapeHtml(defaultStartDate)}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(defaultStartDate || this._t('datePickerPlaceholder', '选择日期'))}</button></span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('productDetailExpiryDate', '到期日'))}</span><span class="am-fpc1-row__value am-fpc1-row__value--date am-datepicker-cell" data-am-datepicker="endDate" data-am-shortcuts="today"><input type="hidden" name="endDate" value="${escapeHtml(defaultEndDate)}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(defaultEndDate || this._t('datePickerPlaceholder', '选择日期'))}</button></span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('renewFieldAmount', '金额'))}</span><span class="am-fpc1-row__value am-fpc1-row__value--static">${escapeHtml(amountText)}</span></div></div></div><p class="am-product-hint">${escapeHtml(this._t('subscriptionPeriodEditHint', '日期写错了可以直接改；和相邻周期不允许重叠，保存时会自动校验。'))}</p></div><footer class="am-form-shell__footer"><button type="submit" class="am-form-shell__save" data-save>${escapeHtml(this._t('btnSave', '保存'))}<span class="am-form-shell__save-spinner"></span></button></footer></form></div>`;
+        const isTopmostPluginSheet = () => {
+            if (!mask.parentNode) return false;
+            const overlays = mask.parentNode.querySelectorAll(':scope > .am-edit-sheet-mask, :scope > .am-product-card-mask');
+            return overlays.length > 0 && overlays[overlays.length - 1] === mask;
+        };
+        const close = () => {
+            window.removeEventListener('keydown', onKeydown, KEYDOWN_CAPTURE_OPTS);
+            if (mask.parentNode) mask.parentNode.removeChild(mask);
+        };
+        const onKeydown = event => {
+            if (event.key !== 'Escape') return;
+            if (this._closeAmGlassSelectPanels()) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+                return;
+            }
+            if (!isTopmostPluginSheet()) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+            close();
+        };
+        const closeBtn = mask.querySelector('[data-close]');
+        if (closeBtn) closeBtn.onclick = close;
+        mask.onclick = event => { if (event.target === mask) close(); };
+        const form = mask.querySelector('form[data-period-form]');
+        this._bindAmDatepickers(mask);
+        let submitting = false;
+        form.onsubmit = async event => {
+            event.preventDefault();
+            if (!this._validateFormBeforeSave(form)) return;
+            if (submitting) return;
+            submitting = true;
+            const saveButton = form.querySelector('[type="submit"]');
+            if (saveButton) { saveButton.disabled = true; saveButton.setAttribute('aria-busy', 'true'); }
+            try {
+                await this.updateSubscriptionPeriod(id, {
+                    periodId: periodId,
+                    startDate: form.elements.startDate.value,
+                    endDate: form.elements.endDate.value,
+                });
+                this.showToast('✓ ' + this._t('subscriptionPeriodEditSuccess', '订阅周期已更新'));
+                close();
+                this.closeProductCard();
+                this.openFormalProductCard(id, host);
+            } catch (error) {
+                submitting = false;
+                if (saveButton) { saveButton.disabled = false; saveButton.setAttribute('aria-busy', 'false'); }
+                this.showToast('⚠️ ' + (error && error.message ? error.message : 'update failed'));
             }
         };
         host.appendChild(mask);

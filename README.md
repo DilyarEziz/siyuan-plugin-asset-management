@@ -13,6 +13,17 @@ Your personal asset keeper in SiYuan · Wishlist / Active / Retired · Daily cos
 
 ## Changelog
 
+### v2.6.8
+
+**Editable & deletable renewal periods, renewed-expiry display fix, mobile dropdown fix**
+
+- New: per-period editing — every entry in the subscription history has an Edit button, so mis-typed start / end dates can be fixed directly; saving validates against overlapping adjacent periods and voids the original record for a traceable audit trail.
+- New: delete a mistaken renewal — the latest period shows a Delete button (offered once there are at least two periods); its payment is voided in the same transaction, so net cost, daily cost and subscription reports roll back. Recorded in the operation log.
+- Fixed: after renewing, product cards kept showing the original end date — card expiry, home reminders and sorting now use the latest period's end date, matching the "Renewed" badge.
+- Fixed: mobile dropdowns not responding — billing-cycle / currency dropdowns and the date picker could pop entirely off-screen; panels now clamp to the viewport, flip above when there is no room below, and close on more touch-reliable pointer events.
+- Improved: the four home filter dropdowns (status / type / sort / filter) now share one look — the status menu's filled highlight with 8px rounded corners, consistent in light and dark themes.
+- Fixed: deleting a prepaid transaction always failed (its operation-log type was missing from the storage whitelist); whitelisted again.
+
 ### v2.6.7
 
 **Consistent out-of-warranty wording, bold notes, and selectable detail-card text**
@@ -39,15 +50,5 @@ Your personal asset keeper in SiYuan · Wishlist / Active / Retired · Daily cos
 - Improved: expired subscriptions now count as retired — they no longer sit in the "Active" list; the "Active" filter excludes them while "Retired" includes them, and the active / retired numbers on the home page and in reports stay in sync. Expired subscription cards show a grey "Expired" badge, while subscriptions with auto-renew on keep their "Pending renewal" badge as before.
 - Improved: the tag, brand, and channel rankings in reports now always show — the "Report Sections" switches are gone from Settings, so there is nothing to enable manually.
 - Fixed: directly created products no longer show a "wishlist journey" — only products that truly went through the wishlist (still wished, or purchased from the wishlist pool) show their wish date and heartbeat records.
-
-### v2.6.5
-
-**Brands & purchase channels, upgraded filters, and report dimension analysis**
-
-- New: tag each asset with a brand (e.g. Xiaomi, Huawei) and a purchase channel (e.g. Amazon, a local store). Pick an existing entry or create your own right in the asset editor, with custom names and colors.
-- New: the home filter now offers three switchable groups — tags, brands, and purchase channels — each with multi-select, and they combine freely. For example, select "Xiaomi" AND "Amazon" to see only Xiaomi items bought there.
-- New: reports gain "Dimension analysis" — spending rankings by brand and by purchase channel. Tap an entry to view the underlying assets, and choose which rankings to show in Settings.
-- Improved: the tag limit is gone — add as many tags as you like.
-- Improved: required form fields are now marked with a red dot, so you can see at a glance what must be filled in; optional fields can be left empty.
 
 > For the full changelog, see [CHANGELOG.md](./CHANGELOG.md).

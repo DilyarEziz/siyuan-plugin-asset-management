@@ -4,6 +4,18 @@
 
 ## 中文
 
+### v2.6.8
+
+**续订周期可编辑可删除、续订后到期日展示修正、手机端下拉修复**
+
+- 新增：订阅历程支持逐期编辑——产品详情卡的「订阅历程」里每一期都有「编辑」按钮，开始日期、到期日写错了直接改；保存时自动校验与相邻周期不重叠，原始记录作废留档、全程可追溯。
+- 新增：误续订可以删除——最新一期会显示「删除」按钮（至少有两期时才提供），撤销不小心记下的续订：这一期的付款金额一并作废，净成本、日均成本与订阅报表随之回退；操作记入操作日志，随时可查。
+- 修复：明明续订了，产品卡上的到期日仍按原来的结束日展示——现在只要续出下一期，卡片到期日、详情卡、首页到期提醒和排序都改按最新一期的结束日计算，与「已续订」徽章一起正确反映续订后的状态。
+- 修复：手机端下拉选项无效——表单里的计费周期 / 币种下拉和日期选择器在手机上可能整个弹到屏幕外，看起来就是点了没反应；现在弹层自动钳制在屏幕内、下方放不下时改为向上弹出，点外部收起改用触摸更可靠的指针事件，软键盘弹出 / 收起时跟随重新定位。
+- 改进：首页四个筛选下拉（状态 / 类型 / 排序 / 筛选）样式统一——选中高亮都用「全部状态」的填充效果，圆角统一为「实物 / 虚拟」下拉的 8px 圆角矩形，不再一个胶囊一个方框两种观感；明暗主题同步。
+- 修复：删除预付流水会一直失败——操作日志类型未登记导致保存被拒（v2.6.3 起的潜在缺陷），已补录白名单，预付流水的逐条删除恢复正常。
+- 构建：版本号升至 `2.6.8`，同步更新双语 README、构建产物和发布包；修复打包脚本把旧 package.zip 嵌进新包导致体积滚雪球的问题。
+
 ### v2.6.7
 
 **过保措辞收口、备注支持加粗、详情卡文字可选中**
@@ -327,6 +339,18 @@
 - 编辑预付权益时，价格字段预填首笔购买金额。
 
 ## English
+
+### v2.6.8
+
+**Editable & deletable renewal periods, renewed-expiry display fix, mobile dropdown fix**
+
+- New: per-period editing — every entry in the product detail card's subscription history now has an Edit button, so mis-typed start / end dates can be fixed directly. Saving validates against overlapping adjacent periods, and the original record is voided for a fully traceable audit trail.
+- New: delete a mistaken renewal — the latest period shows a Delete button (offered once there are at least two periods). It removes the renewal you did not actually make: its payment is voided in the same transaction, so net cost, daily cost and the subscription reports roll back. The change is recorded in the operation log.
+- Fixed: after renewing, product cards kept showing the original end date — once a next period exists, the card expiry, the detail card, home reminders and sorting all use the latest period's end date, matching the existing "Renewed" badge.
+- Fixed: mobile dropdowns not responding — the billing-cycle / currency dropdowns and the date picker could pop entirely off-screen on phones, which looks like tapping does nothing. Panels now clamp to the viewport, flip above the trigger when there is no room below, close on more touch-reliable pointer events, and follow soft-keyboard show / hide.
+- Improved: the four home filter dropdowns (status / type / sort / filter) now share one look — the filled highlight from the status menu with the 8px rounded corners from the type menu, in light and dark themes.
+- Fixed: deleting a prepaid transaction always failed — its operation-log type was missing from the storage whitelist (latent since v2.6.3); the type is whitelisted again and per-row deletion works.
+- Build: version bumped to `2.6.8` with bilingual README, build artifacts and the release package updated; the packaging script no longer nests the previous package.zip inside the new one.
 
 ### v2.6.7
 

@@ -33,6 +33,8 @@ if exist "%TEMP_DIR%\node_modules" rd /s /q "%TEMP_DIR%\node_modules"
 if exist "%TEMP_DIR%\build.sh" del /q "%TEMP_DIR%\build.sh"
 if exist "%TEMP_DIR%\build.bat" del /q "%TEMP_DIR%\build.bat"
 if exist "%TEMP_DIR%\.hotreload" del /q "%TEMP_DIR%\.hotreload"
+REM v2.6.8 修复：旧 package.zip 不再被打进新包（此前每次打包嵌套上一版 zip，体积滚雪球）
+if exist "%TEMP_DIR%\package.zip" del /q "%TEMP_DIR%\package.zip"
 
 REM 删除旧的输出文件
 if exist "%ORIGINAL_DIR%\%OUTPUT%" del /q "%ORIGINAL_DIR%\%OUTPUT%"

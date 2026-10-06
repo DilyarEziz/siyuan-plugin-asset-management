@@ -6963,7 +6963,9 @@
     min-height: 36px;
     padding: 8px 10px;
     border: 0;
-    border-radius: 999px;
+    /* v2.6.8：999px 全胶囊 → 8px 圆角矩形——四个下拉（状态/类型/排序/筛选）统一为
+       「全部状态」的填充高亮效果，圆角手感对齐原实物/虚拟玻璃胶囊（v1.8.8 --kind 专属样式已移除）。 */
+    border-radius: 8px;
     background: transparent;
     color: inherit;
     font: inherit;
@@ -7083,21 +7085,8 @@
 }
 
 /* v1.8.8：kind（实物/虚拟/预付）与标签下拉的选项升级玻璃胶囊——
-   状态/排序保持透明文本行（已够好），仅 --kind / --tag 两个容器内的条目
-   去掉黑实边、改白高光边 + 半透白体 + 顶部高光线，与整体液态玻璃语言统一。 */
-.am-home-filter-dropdown--kind .am-home-filter-dropdown__option {
-    margin: 2px 0;
-    border: 1px solid rgba(255, 255, 255, 0.55);
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.42);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
-}
-.am-home-filter-dropdown--kind .am-home-filter-dropdown__option:hover,
-.am-home-filter-dropdown--kind .am-home-filter-dropdown__option.is-active {
-    background: rgba(255, 255, 255, 0.68);
-    border-color: color-mix(in srgb, var(--am-blue) 40%, transparent);
-    color: var(--am-blue);
-}
+   v2.6.8：--kind 专属胶囊样式移除——四个下拉统一为「全部状态」填充高亮 + 8px 圆角
+   （基础 __option 规则已改半径），不再按 kind 差异化；标签下拉是多选 chip 云，保留 --tag。 */
 .am-home-filter-dropdown--tag .am-home-filter-dropdown__tag {
     border: 1px solid rgba(255, 255, 255, 0.55);
     border-radius: 8px;
@@ -13558,21 +13547,15 @@
     color: var(--am-blue-2);
 }
 
-/* v1.8.8 液态玻璃（暗色）：kind/tag 下拉选项深半透胶囊 */
-[data-theme-mode="dark"] .am-home-filter-dropdown--kind .am-home-filter-dropdown__option,
+/* v1.8.8 液态玻璃（暗色）：tag 下拉 chip 深半透胶囊（v2.6.8：--kind 选项专属样式随亮色一并移除） */
 [data-theme-mode="dark"] .am-home-filter-dropdown--tag .am-home-filter-dropdown__tag,
-.b3-theme-dark .am-home-filter-dropdown--kind .am-home-filter-dropdown__option,
 .b3-theme-dark .am-home-filter-dropdown--tag .am-home-filter-dropdown__tag {
     background: rgba(255, 255, 255, 0.07);
     border-color: rgba(255, 255, 255, 0.13);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
-[data-theme-mode="dark"] .am-home-filter-dropdown--kind .am-home-filter-dropdown__option:hover,
-[data-theme-mode="dark"] .am-home-filter-dropdown--kind .am-home-filter-dropdown__option.is-active,
 [data-theme-mode="dark"] .am-home-filter-dropdown--tag .am-home-filter-dropdown__tag:hover,
 [data-theme-mode="dark"] .am-home-filter-dropdown--tag .am-home-filter-dropdown__tag.is-active,
-.b3-theme-dark .am-home-filter-dropdown--kind .am-home-filter-dropdown__option:hover,
-.b3-theme-dark .am-home-filter-dropdown--kind .am-home-filter-dropdown__option.is-active,
 .b3-theme-dark .am-home-filter-dropdown--tag .am-home-filter-dropdown__tag:hover,
 .b3-theme-dark .am-home-filter-dropdown--tag .am-home-filter-dropdown__tag.is-active {
     background: rgba(255, 255, 255, 0.15);
@@ -13594,9 +13577,16 @@
 .am-product-timeline__dot { position: relative; z-index: 1; flex: 0 0 auto; width: 9px; height: 9px; margin-top: 4px; border-radius: 50%; background: var(--b3-theme-primary, #3575f3); }
 .am-product-timeline__main { flex: 1 1 auto; min-width: 0; }
 .am-product-timeline__range { font-size: 14px; color: var(--b3-theme-on-background); }
-.am-product-timeline__meta { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.am-product-timeline__meta { display: flex; align-items: center; gap: 8px; margin-top: 2px; flex-wrap: wrap; }
 .am-product-timeline__kind { font-size: 12px; color: var(--b3-text-color-secondary); }
 .am-product-timeline__amount { font-size: 12px; color: var(--b3-text-color-secondary); }
+/* v2.6.8：订阅历程逐期操作——「最新」徽章 + 编辑 / 删除小按钮（删除仅最新一期渲染） */
+.am-product-timeline__latest { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 6px; font-size: 11px; font-weight: 600; color: var(--b3-theme-primary, #3575f3); background: color-mix(in srgb, var(--b3-theme-primary, #3575f3) 10%, transparent); vertical-align: 1px; }
+.am-product-timeline__actions { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
+.am-product-timeline__action { padding: 2px 8px; border: 1px solid var(--b3-border-color); border-radius: 8px; background: transparent; color: var(--b3-theme-on-background); font-size: 12px; line-height: 1.4; cursor: pointer; transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease; }
+.am-product-timeline__action:hover { background: color-mix(in srgb, var(--b3-theme-primary, #3575f3) 10%, transparent); color: var(--b3-theme-primary, #3575f3); border-color: color-mix(in srgb, var(--b3-theme-primary, #3575f3) 40%, transparent); }
+.am-product-timeline__action--danger:hover { background: rgba(214, 69, 69, 0.10); color: #d64545; border-color: rgba(214, 69, 69, 0.45); }
+[data-theme-mode="dark"] .am-product-timeline__action--danger:hover, .b3-theme-dark .am-product-timeline__action--danger:hover { background: rgba(255, 138, 138, 0.12); color: #ff9a9a; border-color: rgba(255, 154, 154, 0.45); }
 
 /* ---------- Stage 4: prepaid detail card + quick-action sheet ---------- */
 .am-product-timeline__amount--in { color: #4f9e2b; font-weight: 600; }
@@ -14607,7 +14597,8 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-/* popover：fixed + body 挂载，定位由 _bindAmGlassSelects 收束（同 datepicker） */
+/* popover：fixed + body 挂载，定位由 _bindAmGlassSelects 收束（同 datepicker）。
+   v2.6.8：max-width 钳制 —— 窄屏（手机竖屏）下超宽选项列表不再横向溢出视口 */
 .am-glass-select-popover {
     position: fixed;
     z-index: 99999;
@@ -14616,6 +14607,7 @@
     flex-direction: column;
     min-width: 128px;
     width: max-content;
+    max-width: calc(100vw - 16px);
     padding: 4px;
     border: 1px solid rgba(255, 255, 255, 0.6);
     border-radius: 12px;
