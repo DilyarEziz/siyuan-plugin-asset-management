@@ -1700,9 +1700,6 @@ function normalizeFormalV2Asset(value, options) {
     const kind = source.kind;
     const status = source.status == null ? ASSET_STATUS.ACTIVE : source.status;
     if (!isEnumValue(status, ASSET_STATUS)) throw formalError('status is invalid');
-    if (status === ASSET_STATUS.RETIRED && kind !== FORMAL_ASSET_KIND.PHYSICAL) {
-        throw formalError('retired status is only allowed for physical assets');
-    }
     const wishlist = status === ASSET_STATUS.WISHLIST;
     assertFormalKnownKeys(source, wishlist ? FORMAL_V2_WISHLIST_KEYS : FORMAL_V2_OWNED_KEYS, 'asset');
     const createdAt = formalInstant(source.createdAt, opts.now || new Date().toISOString(), 'createdAt', formalHasOwn(source, 'createdAt'));

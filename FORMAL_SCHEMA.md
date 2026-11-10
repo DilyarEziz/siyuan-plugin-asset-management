@@ -11,6 +11,7 @@ v0.18 引入 formal-v2 schemaGeneration。v0.17 的 formal-v1 数据**不会自�
 `assets.json` wrapper 固定为 `{ schemaGeneration: "formal-v2", schemaVersion: 1, assets }`。
 
 - `kind` 仅为：`physical`、`virtualSubscription`、`virtualPerpetual`、`prepaidAmount`、`prepaidCount`。
+- `status` 仅为：`active`、`retired`（owned）、`wishlist`（极简 schema）。**v2.7.0 起全部 owned kind 均允许 `retired`**（快速退役入口：买断用完、实物丢弃、预付弃用、订阅放弃续订）；此前"retired 仅 physical"的写入不变量已删除。旧数据从未存在非实物 retired 资产（当时写入被拒），放宽为纯增量约束，存量文件校验行为不变，无迁移无重置。订阅到期的"显示为退役"仍是投影口径（`isEffectivelyRetired`），与 `status` 字段无关。
 - `categoryId` 可选且受控；允许值为 `digital/appliance/home/otherPhysical`（physical）、`member/software/service/domain/ai/otherVirtual`（virtual；买断仅 `software` / `otherVirtual`）、`prepaidAmount`（金额预付）和 `prepaidCount`（次数预付）。旧 `category` 不是正式字段。
 - canonical owned 顶层字段：`id`（小写 UUID）、`kind`、`name`、`status`、`currency`（ISO 4217）、`acquiredOn`、`statusChangedOn`、`categoryId`、`tagIds`（最多 3 个 UUID 外键）、`cover`、`notes`、`createdAt`、`updatedAt`、`details`、`indexBlockId`、`relatedNotes`。
 - `indexBlockId` 仅用于 owned 资产，值为索引文档中该资产块的非空 ID（最长 64 字符）或 `null`；wishlist 极简 schema 不携带该字段。

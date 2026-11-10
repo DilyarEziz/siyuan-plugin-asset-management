@@ -158,7 +158,15 @@ expectInvalid(() => model.mergeFormalV2AssetPatch(physical, { reminderPolicy: { 
 ].forEach(([kind, details]) => expectInvalid(() => model.newFormalV2Asset({
     id: createStableId(), kind, name: 'removed field', details,
 }, options), /unknown field/));
-expectInvalid(() => model.newFormalV2Asset({ kind: 'virtualSubscription', name: 'retired subscription', status: 'retired' }, options), /only allowed for physical/);
+// v2.7.0：retired 不再是 physical 专属——全部 owned kind 均允许 retired
+// （快速退役入口）。wishlist 状态仍走极简 schema，与 retired 互斥（枚举校验）。
+['virtualSubscription', 'virtualPerpetual', 'prepaidAmount', 'prepaidCount'].forEach(kind => {
+    const retiredOwned = model.newFormalV2Asset({
+        id: createStableId(), kind, name: 'retired ' + kind, status: 'retired',
+        acquiredOn: '2026-07-01', statusChangedOn: '2026-07-05',
+    }, options);
+    assert.equal(retiredOwned.status, 'retired', kind + ' supports retired status since v2.7.0');
+});
 
 // Wrapper factory and validator must enforce v2 markers.
 const wrapper = model.createFormalV2AssetWrapper(owned.concat(wishlist), { updatedAt: NOW });

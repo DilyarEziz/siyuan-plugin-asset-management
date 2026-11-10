@@ -13,6 +13,14 @@ Your personal asset keeper in SiYuan · Wishlist / Active / Retired · Daily cos
 
 ## Changelog
 
+### v2.7.0
+
+**Note links in remarks, quick retire for perpetual / prepaid assets**
+
+- New: note links in remarks — typing `[[` or `【【` (English and Chinese input methods) in a remark editor pops up a note search panel; pick a document and it is inserted as `[Title](siyuan://blocks/<blockID>)`, clickable in the detail card and edit-form preview to jump straight to the note. Only SiYuan block-ID URLs are accepted; other URLs stay plain text, and jumping from the form preview never discards unsaved input. Supported in asset remarks, wishlist reasons, abandon reasons, and retire / sale / maintenance notes; on mobile the panel auto-scrolls into view, tapping a remark puts the caret at the end (links cannot be split by a stray tap), the caret line stays in view as the keyboard rises, and the caret and panel accent follow the theme color.
+- New: quick retire for perpetual and prepaid assets — the card "•••" menu gains "Mark Retired" (centered, theme-colored confirm; retired date = today, prepaid balance-preserved hint when applicable). Retired assets show "Reactivate" to restore service anytime, and the home list refreshes immediately. The perpetual / prepaid edit forms gain the same Status pills as physical, so the retired date is viewable / editable once retired. Physical assets keep their edit-form retire entry and subscriptions stay managed by expiry projection and renewals — no extra retire buttons. Prepaid quick entries (charge / consume / refund / count / adjust) now open as the in-app glass sheet matching the maintenance presentation, no longer a native dialog outside the plugin UI.
+- Improved: the `retired` status is no longer exclusive to physical assets — every owned kind can retire. Old data never contained non-physical retired records, so the relaxation is purely additive: existing files validate unchanged, no migration or reset.
+
 ### v2.6.8
 
 **Editable & deletable renewal periods, renewed-expiry display fix, mobile dropdown fix**
@@ -38,17 +46,5 @@ Your personal asset keeper in SiYuan · Wishlist / Active / Retired · Daily cos
 - Improved: the "N uses left · ¥X/use" figures on count-based prepaid cards now use a muted secondary color, and the home "Retired" divider stretches flush to the card edges.
 - Improved: the per-day cost label on product cards is shortened from "Daily cost" to "Daily" for a tighter layout.
 
-### v2.6.6
-
-**Smoother deletions, a steadier settings window, and expired subscriptions now count as retired**
-
-- New: the AI assistant now understands brands and purchase channels — it can create brand / channel entries by name and set them on assets when creating or editing them.
-- New: on the home page, all retired products are grouped at the bottom of the list, separated from the rest by a "Retired" divider line for a clear overview.
-- Improved: brands, purchase channels, and tags can now be deleted at any time — even when assets still reference them. On deletion, the plugin clears the brand / channel from those assets (shown as "not set") and removes the tag from their tag lists, and tells you upfront how many assets are affected, so there is no need to edit each asset first.
-- Improved: deleting a brand, channel, or tag now asks for confirmation first — so a stray click no longer removes anything.
-- Improved: the settings window now keeps a fixed height — based on the plugin's main panel, it no longer grows and shrinks as you switch between settings pages; longer pages scroll inside the window.
-- Improved: expired subscriptions now count as retired — they no longer sit in the "Active" list; the "Active" filter excludes them while "Retired" includes them, and the active / retired numbers on the home page and in reports stay in sync. Expired subscription cards show a grey "Expired" badge, while subscriptions with auto-renew on keep their "Pending renewal" badge as before.
-- Improved: the tag, brand, and channel rankings in reports now always show — the "Report Sections" switches are gone from Settings, so there is nothing to enable manually.
-- Fixed: directly created products no longer show a "wishlist journey" — only products that truly went through the wishlist (still wished, or purchased from the wishlist pool) show their wish date and heartbeat records.
 
 > For the full changelog, see [CHANGELOG.md](./CHANGELOG.md).

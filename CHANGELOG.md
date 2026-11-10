@@ -4,6 +4,22 @@
 
 ## 中文
 
+### v2.7.0
+
+**备注支持笔记链接、买断/预付快速退役**
+
+- 新增：备注支持插入笔记链接——在备注输入框里输入 `[[` 或 `【【`（中英文输入法都支持）即弹出笔记搜索列表，输入关键词搜索思源文档，点选（或回车）后以 `[标题](siyuan://blocks/块ID)` 形式插入备注；详情卡与编辑表单预览里链接可点击，直达对应笔记并高亮位置。链接只接受思源块 ID 协议，其他 URL 按普通文字展示，无脚本注入风险；表单预览里点击链接跳转不会丢失未保存内容。资产表单备注、种草理由、拔草原因、退役 / 转让 / 维保备注全部支持。手机端优化：搜索浮层自动滚入可视区（软键盘顶起后无需手动滑动）；点击备注光标直接落到末尾，不会点进双链中间把链接拆坏；进入编辑与键盘弹起后光标行自动保持在可视区内，不再跳回表单顶部「鬼打墙」。备注编辑光标与浮层描边跟随主题色更醒目。
+- 新增：买断、预付权益快速退役——此前只有订阅到期会「看起来退役」（显示口径），永久资产、预付没有任何可见的退役入口，只能进编辑表单切状态。现在买断与预付（金额 / 次数）的卡片「•••」菜单新增「标记退役」：
+  - 轻量确认弹窗，操作居中、确认按钮跟随主题色，退役日期为今天；预付余额大于 0 时会提示「余额连同流水一起保留，不会清零」；
+  - 已退役的买断 / 预付在同菜单显示「重新启用」，随时恢复在役（生命周期记录 restored 事件）；
+  - 买断 / 预付编辑表单同步补「物品状态」在役 / 退役 pill（通用样式对齐实物表单）：在役编辑态不显示退役日期，标记退役后打开表单即可查看并修改退役日期，保存走正式生命周期记录；
+  - 退役 / 恢复后首页列表即刻刷新归入退役分组，无需手动切换视图；
+  - 实物维持编辑表单内的退役入口（可选退役日期与备注、补转让价的正式路径不变），订阅由到期投影与续订管理，均不新增退役按钮，低频操作不占主要位置。
+- 改进：预付快捷记账（充值 / 消费 / 退款 / 记次数 / 校正次数）从思源原生弹窗收编为插件内液态玻璃 sheet——与维保 / 预付流水工作流同款展示，浮在详情卡之上、随插件主题渲染，不再以裸白底弹窗浮在插件 UI 之外；Esc / 遮罩点击 / 关闭按钮均可关闭，字段与保存逻辑完全不变。
+- 改进：数据契约放宽——`retired` 状态不再限于实物资产，全部 owned 类型均可退役；旧数据从未存在非实物退役记录（此前写入被拒），放宽为纯增量约束，存量文件校验行为不变，无迁移无重置（见 `FORMAL_SCHEMA.md`）。
+- 数据安全：退役为可逆状态切换（status + statusChangedOn + lifecycle 事件 + 操作日志全程记录），记录、流水、报表历史全部保留；退役资产移入退役列表、不再计入日均成本。
+- 构建：版本号升至 `2.7.0`，同步更新双语 README、构建产物和发布包；数据契约变更同步 `FORMAL_SCHEMA.md`。
+
 ### v2.6.8
 
 **续订周期可编辑可删除、续订后到期日展示修正、手机端下拉修复**
@@ -339,6 +355,22 @@
 - 编辑预付权益时，价格字段预填首笔购买金额。
 
 ## English
+
+### v2.7.0
+
+**Note links in remarks, quick retire for perpetual / prepaid assets**
+
+- New: note links in remarks — typing `[[` or `【【` (both English and Chinese input methods) in any remark editor pops up a note search panel; type a keyword to search SiYuan documents, click (or press Enter) and the link is inserted as `[Title](siyuan://blocks/<blockID>)`. Links are clickable in the product detail card and the edit-form preview, jumping straight to the note with the block highlighted. Only SiYuan block-ID URLs are accepted — any other URL renders as plain text, so there is no script-injection surface; clicking a link inside the edit-form preview never discards unsaved input. Supported in the asset form remarks, wishlist reasons, abandon reasons, and the retire / sale / maintenance note fields. On mobile the search panel auto-scrolls into view once the soft keyboard rises (no more manual swiping); tapping a remark places the caret at the very end (a stray tap can no longer split a `siyuan://` link in half); the caret line is kept in view on entering edit mode and whenever the keyboard height changes, instead of jumping back to the top of the form. The editor caret plus panel border follow the theme color for better visibility.
+- New: quick retire for perpetual and prepaid assets — until now only expired subscriptions *looked* retired (a display-layer projection); perpetual licenses and prepaid cards had no visible retire entry at all, short of digging into the edit form. The card "•••" menu gains "Mark Retired" for perpetual and prepaid (amount / count):
+  - a lightweight confirm with centered actions and a theme-colored confirm button sets the retired date to today; prepaid cards with a positive balance show "the balance stays with its transaction history and will not be cleared";
+  - retired perpetual / prepaid assets show "Reactivate" in the same menu, restoring service anytime (a restored lifecycle event is recorded);
+  - the perpetual / prepaid edit forms gain the same Status pills as the physical form — the retired date appears only once retired (viewable and editable there, saved through the proper lifecycle path), keeping active editing uncluttered;
+  - the home list refreshes immediately after retiring / reactivating — no manual view switching;
+  - physical assets keep their edit-form retire entry (optional retired date and note, with the proper sale-price path unchanged) and subscriptions stay managed by the expiry projection and renewals — no extra retire buttons on low-frequency paths.
+- Improved: prepaid quick entries (charge / consume / refund / count consume / adjust) now open as the plugin's in-app liquid-glass sheet — the same presentation as the maintenance & prepaid-ledger workflow sheets, floating above the detail card and following the plugin theme — instead of a bare native dialog outside the plugin UI. Esc / mask click / close button all close it; fields and save behavior are unchanged.
+- Improved: data contract relaxed — the `retired` status is no longer exclusive to physical assets; every owned kind can retire. Old data never contained non-physical retired records (writes were rejected before), so the relaxation is purely additive: existing files validate exactly as before, with no migration or reset (see `FORMAL_SCHEMA.md`).
+- Data safety: retiring is a reversible status change (status + statusChangedOn + lifecycle event + operation log, fully audited). Records, transactions and report history are all kept; retired assets move to the retired list and stop counting toward daily cost.
+- Build: version bumped to `2.7.0`, with bilingual READMEs, build artifacts and the release package updated; the data-contract change is documented in `FORMAL_SCHEMA.md`.
 
 ### v2.6.8
 

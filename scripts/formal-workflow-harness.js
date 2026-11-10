@@ -33,6 +33,11 @@ function loadProductionPlugin(document, dialogStats) {
                 }
             },
             Menu: class {},
+            // v2.7.0：跳转块导出。生产代码经 require('siyuan') 解构取用 openTab /
+            // openMobileFileById（模块内绑定遮蔽 global，测试不能靠 global.openTab 注入），
+            // 这里交由测试通过全局钩子按需接管；未挂钩子时为安全 no-op。
+            openTab: options => { if (typeof globalThis.__amOpenTabHook === 'function') return globalThis.__amOpenTabHook(options); },
+            openMobileFileById: (app, id, actions) => { if (typeof globalThis.__amOpenMobileHook === 'function') return globalThis.__amOpenMobileHook(app, id, actions); },
         };
         return original.call(this, request, parent, isMain);
     };

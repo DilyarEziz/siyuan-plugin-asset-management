@@ -772,9 +772,10 @@ function normalizeFormalV2Asset(value, options) {
     const kind = source.kind;
     const status = source.status == null ? ASSET_STATUS.ACTIVE : source.status;
     if (!isEnumValue(status, ASSET_STATUS)) throw formalError('status is invalid');
-    if (status === ASSET_STATUS.RETIRED && kind !== FORMAL_ASSET_KIND.PHYSICAL) {
-        throw formalError('retired status is only allowed for physical assets');
-    }
+    // v2.7.0 起全部 owned kind 均允许 retired（快速退役入口：买断"用完即退役"、
+    // 实物丢弃、预付弃用、订阅放弃续订）。此前仅 physical 允许 retired 的不变量
+    // 已删除——旧数据从未存在非实物 retired 资产（写入被拒），放宽为纯增量约束，
+    // 存量文件校验行为不变，无需迁移。
     const wishlist = status === ASSET_STATUS.WISHLIST;
     assertFormalKnownKeys(source, wishlist ? FORMAL_V2_WISHLIST_KEYS : FORMAL_V2_OWNED_KEYS, 'asset');
     const createdAt = formalInstant(source.createdAt, opts.now || new Date().toISOString(), 'createdAt', formalHasOwn(source, 'createdAt'));

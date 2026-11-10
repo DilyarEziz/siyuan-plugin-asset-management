@@ -2734,9 +2734,6 @@ function normalizeFormalV2Asset(value, options) {
     const kind = source.kind;
     const status = source.status == null ? ASSET_STATUS.ACTIVE : source.status;
     if (!isEnumValue(status, ASSET_STATUS)) throw formalError('status is invalid');
-    if (status === ASSET_STATUS.RETIRED && kind !== FORMAL_ASSET_KIND.PHYSICAL) {
-        throw formalError('retired status is only allowed for physical assets');
-    }
     const wishlist = status === ASSET_STATUS.WISHLIST;
     assertFormalKnownKeys(source, wishlist ? FORMAL_V2_WISHLIST_KEYS : FORMAL_V2_OWNED_KEYS, 'asset');
     const createdAt = formalInstant(source.createdAt, opts.now || new Date().toISOString(), 'createdAt', formalHasOwn(source, 'createdAt'));
@@ -8895,7 +8892,7 @@ const exchangeRateApi = __am_fx;
 const { Plugin, Dialog, Menu, openTab, openMobileFileById } = require("siyuan");
 
 const DOCK_TYPE = "asset-management-dock";
-const PLUGIN_VERSION = "2.6.8";
+const PLUGIN_VERSION = "2.7.0";
 const AUTHOR_URL = "https://ld246.com/member/Dilyar";
 const ICONS8_URL = "https://icons8.com";
 
@@ -9840,7 +9837,13 @@ openWishlistAbandonSheet(id) {
         // v2.6.6 追加：opts.htmlHint 为受控 HTML 第二行（仅允许调用方拼接固定文案 + 数字占位，
         // 不含用户输入），用于「当前被 N 个产品关联」加粗提示；opts.text 仍一律转义。
         const confirmTextHtml = escapeHtml(opts.text || '') + (opts.htmlHint ? '<br/>' + String(opts.htmlHint) : '');
-        mask.innerHTML = `<section class="am-plugin-confirm" role="dialog" aria-modal="true"><div class="am-confirm"><div class="am-confirm__icon">⚠️</div><div class="am-confirm__title">${escapeHtml(opts.title || this._t('dialogDeleteTitle', '确认删除'))}</div><div class="am-confirm__text">${confirmTextHtml}</div></div><div class="am-plugin-confirm__actions"><button type="button" class="b3-button b3-button--cancel am-scoped-confirm__button" data-scoped-confirm-cancel>${escapeHtml(opts.cancelLabel || this._t('btnCancel', '取消'))}</button><button type="button" class="b3-button b3-button--remove am-scoped-confirm__button am-scoped-confirm__button--danger" data-scoped-confirm-ok>${escapeHtml(opts.confirmLabel || this._t('btnConfirm', '确认'))}</button></div></section>`;
+        // v2.7.1：opts.centerActions 操作区居中；opts.confirmTone === 'primary' 确认按钮用
+        // 主题色（快速退役属常规低危操作，不再借用危险红样式）。默认行为不变，仅影响调用方。
+        const actionsCls = 'am-plugin-confirm__actions' + (opts.centerActions ? ' am-plugin-confirm__actions--center' : '');
+        const okBtnCls = opts.confirmTone === 'primary'
+            ? 'b3-button am-scoped-confirm__button am-scoped-confirm__button--primary'
+            : 'b3-button b3-button--remove am-scoped-confirm__button am-scoped-confirm__button--danger';
+        mask.innerHTML = `<section class="am-plugin-confirm" role="dialog" aria-modal="true"><div class="am-confirm"><div class="am-confirm__icon">⚠️</div><div class="am-confirm__title">${escapeHtml(opts.title || this._t('dialogDeleteTitle', '确认删除'))}</div><div class="am-confirm__text">${confirmTextHtml}</div></div><div class="${actionsCls}"><button type="button" class="b3-button b3-button--cancel am-scoped-confirm__button" data-scoped-confirm-cancel>${escapeHtml(opts.cancelLabel || this._t('btnCancel', '取消'))}</button><button type="button" class="${okBtnCls}" data-scoped-confirm-ok>${escapeHtml(opts.confirmLabel || this._t('btnConfirm', '确认'))}</button></div></section>`;
         const close = () => {
             window.removeEventListener('keydown', onKeydown, KEYDOWN_CAPTURE_OPTS);
             if (mask.parentNode) mask.parentNode.removeChild(mask);
@@ -16299,10 +16302,14 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
 
     /**
      * v2.6.7：备注行内 Markdown（加粗 / 斜体 / 下划线 / 删除线 / 行内代码）。
+     * v2.7.0：笔记链接 [文本](siyuan://blocks/<块ID>) —— 渲染为带 data-note-block-id 的
+     * 受控锚点（不带 href，点击由插件接管跳转）。
      *
      * 输入必须是 escapeHtml **之后**的文本（本函数不再做 HTML 转义）；
-     * 单遍正则交替匹配，同一位置按 代码、加粗、下划线、删除线、斜体 的优先级取第一个命中，
+     * 单遍正则交替匹配，同一位置按 链接、代码、加粗、下划线、删除线、斜体 的优先级取第一个命中，
      * 因此：
+     *   - 链接仅接受 siyuan://blocks/<14-7 合法块ID>，其余 URL（http/javascript 等）
+     *     一律维持字面转义展示，杜绝任何协议注入面；链接文本内的行内标记保持字面（单遍不回扫）
      *   - `x` 内部的加粗、下划线、删除线、斜体标记保持字面（代码片段语义优先，不再二次解析）
      *   - **x** 优先于 *x*（先吃双星，剩余单星才作斜体）
      *   - ++x++ 为下划线（Markdown 扩展通用约定，与快捷键 ⌘U 配套）
@@ -16313,8 +16320,12 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
      */
     _renderAssetNotesInlineHtml(escaped) {
         const s = String(escaped == null ? '' : escaped);
-        if (s.indexOf('`') <0 && s.indexOf('*') <0 && s.indexOf('~') <0 && s.indexOf('+') <0) return s; return s.replace( /`([^`\n]+)`|\*\*(\S(?:[^*\n]*\S)?)\*\*|\+\+(\S(?:[^+\n]*\S)?)\+\+|~~(\S(?:[^~\n]*\S)?)~~|\*(\S(?:[^*\n]*\S)?)\*/g,
-            (m, code, bold, underline, del, em) => {
+        if (s.indexOf('`') <0 && s.indexOf('*') <0 && s.indexOf('~') <0 && s.indexOf('+') <0 && s.indexOf('](siyuan://blocks/') <0) return s; return s.replace( /\[([^\[\]\n]+)\]\(siyuan:\/\/blocks\/([0-9]{14}-[a-z0-9]{7})\)|`([^`\n]+)`|\*\*(\S(?:[^*\n]*\S)?)\*\*|\+\+(\S(?:[^+\n]*\S)?)\+\+|~~(\S(?:[^~\n]*\S)?)~~|\*(\S(?:[^*\n]*\S)?)\*/g,
+            (m, linkText, linkId, code, bold, underline, del, em) => {
+                if (linkText !== undefined) {
+                    // linkId 已被正则严格限定为 [0-9]{14}-[a-z0-9]{7}，可直接入属性；linkText 来自 escape 后文本。
+                    return '<a class="am-note-link" data-note-block-id="' + linkId + '">' + linkText + '</a>';
+                }
                 if (code !== undefined) return '<code>' + code + '</code>';
                 if (bold !== undefined) return '<strong>' + bold + '</strong>';
                 if (underline !== undefined) return '<u>' + underline + '</u>';
@@ -16375,10 +16386,24 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
 
         // 点击渲染区域 → 进入编辑，并把光标定位到点击处（v2.6.7 实验：点击定位输入）
         const onRenderedClick = (event) => {
+            // v2.7.0：点击备注内的笔记链接 → 直达对应笔记，不进入编辑态、不做光标定位
+            const noteLinkEl = event.target instanceof Element ? event.target.closest('.am-note-link') : null;
+            if (noteLinkEl) {
+                const blockId = noteLinkEl.getAttribute('data-note-block-id');
+                if (blockId) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    this._jumpToBlock(blockId);
+                    return;
+                }
+            }
+            // v2.7.1：移动端点击备注 → 光标直接落到末尾——点击定位容易把 [标题](siyuan://…)
+            // 双链拆成两段；桌面保留点击定位输入。
             // 顺序关键：必须趁渲染层还可见时先用点击坐标拿渲染 DOM 位置；
             // 一旦切到编辑态（rendered 隐藏），caretRangeFromPoint 会命中别处导致定位失效
+            const caretAtEnd = !!this.isMobile;
             let position = null;
-            try {
+            if (!caretAtEnd) try {
                 if (document.caretRangeFromPoint) {
                     const range = document.caretRangeFromPoint(event.clientX, event.clientY);
                     if (range && rendered.contains(range.startContainer)) {
@@ -16417,6 +16442,11 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
             if (scroller) scroller.scrollTop = prevScroll;
             // v1.4.0：textarea 在查看态 display:none，scrollHeight 不可靠；切回编辑态变可见后
             // 必须重算 autoGrow，否则高度停留在窄值（"编辑态边框比查看态窄"的根因）。
+            // v2.7.1：移动端光标落末尾（focus 后设置，避免 iOS 在 focus 时重置选区）
+            if (caretAtEnd && typeof textarea.setSelectionRange === "function") {
+                const _end = String(textarea.value).length;
+                textarea.setSelectionRange(_end, _end);
+            }
             autoGrow();
         };
         rendered.addEventListener('click', onRenderedClick);
@@ -16429,6 +16459,26 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
             }, 0);
         };
         textarea.addEventListener('blur', onTextareaBlur);
+
+        // v2.7.1：移动端键盘可视性校正——点击进入编辑的瞬间软键盘还没升起，followCaret
+        // 用的是旧几何；键盘升完（iOS 约 300ms）后没人再校正，光标就停在可视区外，
+        // 直到下一次输入才被拉回。focus 时先校正一次、键盘动画结束再校正一次，键盘
+        // 高度变化（visualViewport resize）期间只要处于编辑态就持续校正。
+        let keyboardSettleTimer = null;
+        const onTextareaFocus = () => {
+            followCaret();
+            if (keyboardSettleTimer) clearTimeout(keyboardSettleTimer);
+            keyboardSettleTimer = setTimeout(() => { keyboardSettleTimer = null; followCaret(); }, 320);
+        };
+        textarea.addEventListener('focus', onTextareaFocus);
+        let vvResizeHandler = null;
+        try {
+            const visualViewport = window.visualViewport;
+            if (visualViewport && typeof visualViewport.addEventListener === 'function') {
+                vvResizeHandler = () => { if (wrapper.classList.contains('is-editing')) followCaret(); };
+                visualViewport.addEventListener('resize', vvResizeHandler);
+            }
+        } catch (_) { /* 体验增强，环境不支持则跳过 */ }
 
         // 初始化视图
         renderView();
@@ -16537,6 +16587,20 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
         textarea.addEventListener('compositionend', onNotesCompositionEnd);
         autoGrow(); // 初始化（覆盖预填内容）
 
+        // v2.7.0：[[ / 【【 触发笔记链接选择浮层。中文 IME 的【【经 composition 提交，
+        // input（非组词中）与 compositionend 双入口检测；浮层已打开时不重复弹。
+        let noteLinkPicker = null;
+        const maybeOpenNoteLinkPicker = () => {
+            if (noteLinkPicker) return;
+            const trigger = this._detectNoteLinkTrigger(textarea.value, textarea.selectionStart);
+            if (!trigger) return;
+            noteLinkPicker = this._openNoteLinkPicker(textarea, trigger, () => { noteLinkPicker = null; }) || null;
+        };
+        const onPickerTriggerInput = (event) => { if (!(event && event.isComposing)) maybeOpenNoteLinkPicker(); };
+        const onPickerTriggerCompositionEnd = () => maybeOpenNoteLinkPicker();
+        textarea.addEventListener('input', onPickerTriggerInput);
+        textarea.addEventListener('compositionend', onPickerTriggerCompositionEnd);
+
         const onKeyDown = e => {
             // v1.4.0：Tab / Shift+Tab 行级缩进——给选区覆盖的每一行行首加 / 删 2 空格，
             // 使无序 / 有序列表行缩进后渲染为嵌套子列表（_renderAssetNotesHtml 按行首空白判级）。
@@ -16630,6 +16694,20 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
                 textarea.removeEventListener('keydown', onKeyDown);
                 rendered.removeEventListener('click', onRenderedClick);
                 textarea.removeEventListener('blur', onTextareaBlur);
+                // v2.7.0：清理笔记链接选择浮层与触发监听
+                if (noteLinkPicker && typeof noteLinkPicker.destroy === 'function') noteLinkPicker.destroy();
+                noteLinkPicker = null;
+                textarea.removeEventListener('input', onPickerTriggerInput);
+                textarea.removeEventListener('compositionend', onPickerTriggerCompositionEnd);
+                // v2.7.1：清理键盘可视性校正监听
+                textarea.removeEventListener('focus', onTextareaFocus);
+                if (keyboardSettleTimer) { clearTimeout(keyboardSettleTimer); keyboardSettleTimer = null; }
+                try {
+                    const visualViewport = window.visualViewport;
+                    if (visualViewport && vvResizeHandler && typeof visualViewport.removeEventListener === 'function') {
+                        visualViewport.removeEventListener('resize', vvResizeHandler);
+                    }
+                } catch (_) { /* 清理失败不影响 */ }
                 // v2.6.7 实验：清理光标跟随用的镜像测量节点
                 if (mirror && mirror.parentNode) mirror.parentNode.removeChild(mirror);
                 mirror = null;
@@ -16638,6 +16716,234 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
                 wrapper.remove();
                 if (noteSection) noteSection.classList.remove('am-md-section');
             }
+        };
+    }
+
+    // ===== v2.7.0 备注笔记链接（[[ / 【【 触发选择浮层）=====
+
+    /**
+     * 检测 textarea 光标前是否紧邻触发符 `[[` 或 `【【`（英文直输与中文 IME 均可）。
+     * 命中返回触发符在 value 中的区间 { start, end }，否则 null。纯函数。
+     */
+    _detectNoteLinkTrigger(value, caret) {
+        const s = String(value == null ? '' : value);
+        const end = Number.isFinite(caret) ? Math.max(0, Math.min(caret, s.length)) : s.length;
+        if (end < 2) return null;
+        const two = s.slice(end - 2, end);
+        if (two !== '[[' && two !== '\u3010\u3010') return null;
+        return { start: end - 2, end: end };
+    }
+
+    /**
+     * 净化笔记链接的显示文本：与渲染器链接规则一致，不允许 [ ] 与换行（替换为空格），
+     * 压缩连续空白、限长 80 字符；空结果返回空串（调用方回退到文档 ID）。纯函数。
+     */
+    _sanitizeNoteLinkText(value) {
+        const cleaned = String(value == null ? '' : value)
+            .replace(/[\[\]\r\n]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        return cleaned.length > 80 ? cleaned.slice(0, 80).trim() : cleaned;
+    }
+
+    /**
+     * v2.7.0：笔记链接选择浮层。挂在 textarea 的 .am-md-editor wrapper 内（焦点留在
+     * wrapper 里，blur-to-render 不会误切查看态），绝对定位贴光标行（镜像测量，失败落
+     * textarea 底部）。搜索走 /api/filetree/searchDocs（思源文档树搜索同源端点），
+     * 250ms 防抖；点选 / 回车插入 `[标题](siyuan://blocks/<id>)` 并替换触发符。
+     * 返回 { destroy }；onClosed 在浮层关闭（含销毁）时回调，供宿主清引用。
+     */
+    _openNoteLinkPicker(textarea, trigger, onClosed) {
+        const wrapper = typeof textarea.closest === 'function' ? textarea.closest('.am-md-editor') : null;
+        if (!wrapper || !document || !document.body) return null;
+        const closeRef = { done: false };
+        const panel = document.createElement('div');
+        panel.className = 'am-note-link-picker';
+        panel.innerHTML = '<div class="am-note-link-picker__search">'
+            + '<input type="text" class="am-note-link-picker__input b3-text-field" '
+            + 'placeholder="' + escapeHtml(this._t('noteLinkPickerSearchPlaceholder', '输入关键词搜索笔记')) + '"></div>'
+            + '<div class="am-note-link-picker__list" role="listbox"></div>';
+        wrapper.appendChild(panel);
+        const input = panel.querySelector('.am-note-link-picker__input');
+        const listEl = panel.querySelector('.am-note-link-picker__list');
+        const emptyText = this._t('noteLinkPickerEmpty', '没有匹配的笔记');
+        const failedText = this._t('noteLinkPickerFailed', '搜索失败，请稍后重试');
+
+        // 定位：贴光标行。镜像测量与光标跟随同一坐标系（textarea 内容顶 = wrapper 顶附近）。
+        try {
+            const ts = window.getComputedStyle(textarea);
+            const probe = document.createElement('div');
+            probe.setAttribute('aria-hidden', 'true');
+            const ps = probe.style;
+            ps.position = 'absolute';
+            ps.top = '0';
+            ps.left = '-9999px';
+            ps.visibility = 'hidden';
+            ps.whiteSpace = 'pre-wrap';
+            ps.overflowWrap = 'anywhere';
+            ps.width = textarea.clientWidth + 'px';
+            ps.fontFamily = ts.fontFamily;
+            ps.fontSize = ts.fontSize;
+            ps.fontWeight = ts.fontWeight;
+            ps.fontStyle = ts.fontStyle;
+            ps.lineHeight = ts.lineHeight;
+            ps.letterSpacing = ts.letterSpacing;
+            ps.wordSpacing = ts.wordSpacing;
+            ps.tabSize = ts.tabSize;
+            ps.padding = ts.padding;
+            ps.border = ts.border;
+            ps.boxSizing = ts.boxSizing;
+            document.body.appendChild(probe);
+            const caret = textarea.selectionStart == null ? textarea.value.length : textarea.selectionStart;
+            probe.textContent = String(textarea.value).slice(0, caret) + '\u200b';
+            const caretY = probe.scrollHeight;
+            probe.textContent = '';
+            if (probe.parentNode) probe.parentNode.removeChild(probe);
+            panel.style.top = Math.max(0, caretY + textarea.offsetTop + 4) + 'px';
+        } catch (_) {
+            panel.style.top = textarea.offsetTop + textarea.offsetHeight + 'px';
+        }
+        panel.style.left = '0';
+        panel.style.right = '0';
+
+        let results = [];
+        let activeIndex = -1;
+        let searchToken = 0;
+        let debounceTimer = null;
+        let keyboardSettleTimer = null;
+        let searchFailed = false;
+
+        const renderRows = () => {
+            if (!results.length) {
+                listEl.innerHTML = '<div class="am-note-link-picker__empty">' + escapeHtml(searchFailed ? failedText : emptyText) + '</div>';
+                return;
+            }
+            listEl.innerHTML = results.map((item, idx) => '<button type="button" class="am-note-link-picker__row' + (idx === activeIndex ? ' is-active' : '')
+                + '" role="option" aria-selected="' + (idx === activeIndex ? 'true' : 'false') + '" data-pick-idx="' + idx + '">'
+                + '<span class="am-note-link-picker__title">' + escapeHtml(item.title) + '</span>'
+                + '<span class="am-note-link-picker__path">' + escapeHtml(item.hPath) + '</span></button>').join('');
+            const active = listEl.querySelector('.am-note-link-picker__row.is-active');
+            if (active && typeof active.scrollIntoView === 'function') {
+                try { active.scrollIntoView({ block: 'nearest' }); } catch (_) { /* 体验增强，失败忽略 */ }
+            }
+        };
+
+        const runSearch = async () => {
+            const keyword = input.value.trim();
+            const token = ++searchToken;
+            if (!keyword) {
+                results = [];
+                searchFailed = false;
+                activeIndex = -1;
+                renderRows();
+                return;
+            }
+            try {
+                const response = await fetch('/api/filetree/searchDocs', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ k: keyword }),
+                });
+                const payload = await response.json();
+                if (token !== searchToken || closeRef.done) return;
+                if (!payload || payload.code !== 0 || !Array.isArray(payload.data)) throw new Error('searchDocs failed');
+                results = payload.data.map(row => {
+                    const id = String((row && row.path) || '').split('/').pop().replace(/\.sy$/i, '');
+                    const hPath = String((row && row.hPath) || '');
+                    const segments = hPath.split('/');
+                    return { id: id, hPath: hPath, title: segments[segments.length - 1] || id };
+                }).filter(item => /^[0-9]{14}-[a-z0-9]{7}$/.test(item.id)).slice(0, 30);
+                activeIndex = results.length ? 0 : -1;
+                searchFailed = false;
+            } catch (_) {
+                if (token !== searchToken || closeRef.done) return;
+                results = [];
+                searchFailed = true;
+                activeIndex = -1;
+            }
+            renderRows();
+        };
+
+        const close = (restoreFocus) => {
+            if (closeRef.done) return;
+            closeRef.done = true;
+            if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
+            if (keyboardSettleTimer) { clearTimeout(keyboardSettleTimer); keyboardSettleTimer = null; }
+            document.removeEventListener('pointerdown', onOutside, true);
+            document.removeEventListener('mousedown', onOutside, true);
+            if (panel.parentNode) panel.parentNode.removeChild(panel);
+            if (restoreFocus) {
+                try { textarea.focus({ preventScroll: true }); } catch (_) { try { textarea.focus(); } catch (_e) {} }
+            }
+            if (typeof onClosed === 'function') onClosed();
+        };
+        const onOutside = (event) => {
+            if (!panel.contains(event.target)) close(false);
+        };
+        const outsideEvent = 'PointerEvent' in window ? 'pointerdown' : 'mousedown';
+
+        const pick = (item) => {
+            if (!item) return;
+            const title = this._sanitizeNoteLinkText(item.title) || item.id;
+            const markdown = '[' + title + '](siyuan://blocks/' + item.id + ')';
+            const start = trigger.start;
+            const end = trigger.end;
+            if (typeof textarea.setRangeText === 'function') {
+                textarea.setRangeText(markdown, start, end, 'end');
+            } else {
+                const value = textarea.value;
+                textarea.value = value.slice(0, start) + markdown + value.slice(end);
+                if (typeof textarea.setSelectionRange === 'function') {
+                    const pos = start + markdown.length;
+                    textarea.setSelectionRange(pos, pos);
+                }
+            }
+            textarea.dispatchEvent(createPluginDomEvent(textarea, 'input'));
+            close(true);
+        };
+
+        input.addEventListener('input', () => {
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => { debounceTimer = null; runSearch(); }, 250);
+        });
+        input.addEventListener('keydown', (event) => {
+            if (event.key === 'ArrowDown') {
+                if (results.length) { activeIndex = (activeIndex + 1) % results.length; renderRows(); }
+                event.preventDefault();
+            } else if (event.key === 'ArrowUp') {
+                if (results.length) { activeIndex = (activeIndex - 1 + results.length) % results.length; renderRows(); }
+                event.preventDefault();
+            } else if (event.key === 'Enter') {
+                event.preventDefault();
+                if (results[activeIndex]) pick(results[activeIndex]);
+            } else if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                close(true);
+            }
+        });
+        listEl.addEventListener('click', (event) => {
+            const row = event.target instanceof Element ? event.target.closest('[data-pick-idx]') : null;
+            if (!row) return;
+            pick(results[Number(row.getAttribute('data-pick-idx'))]);
+        });
+
+        document.addEventListener(outsideEvent, onOutside, true);
+        renderRows();
+        try { input.focus({ preventScroll: true }); } catch (_) { input.focus(); }
+
+        // v2.7.1：移动端软键盘顶起视口后，浮层/搜索框可能落在视口外，手动滑动又容易触发
+        // sheet 拖拽关闭——聚焦后把浮层滚入最近可视区，键盘动画完成（约 280ms）再补滚一次。
+        const scrollPickerIntoView = () => {
+            try {
+                if (typeof panel.scrollIntoView === 'function') panel.scrollIntoView({ block: 'nearest' });
+            } catch (_) { /* 体验增强，失败忽略 */ }
+        };
+        scrollPickerIntoView();
+        keyboardSettleTimer = setTimeout(() => { keyboardSettleTimer = null; scrollPickerIntoView(); }, 280);
+
+        return {
+            destroy() { close(false); },
         };
     }
 
@@ -16817,6 +17123,8 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
      * v2.6.7 实验：剥离一行文本中的行内标记（加粗 / 斜体 / 删除线 / 下划线 / 行内代码），
      * 返回 { text, colMap }——text 为渲染后的可见文本，colMap[i] 是可见第 i 列对应的
      * 原始列（0 起算）。与渲染器的成对定界规则近似，用于点击定位的列映射，非渲染本身。
+     * v2.7.0：追加笔记链接 [text](siyuan://blocks/<id>) 剥离——可见文本只剩 text，
+     * `[`、`](siyuan://blocks/<id>)` 整段从 colMap 剔除，链接后的文本列映射仍准确。
      */
     _stripNotesInlineMarkers(line) {
         const text = String(line == null ? '' : line);
@@ -16826,6 +17134,17 @@ fields.push([this._t('maintenanceTitle', '维保'), String(maintenanceCount)]);
         let i = 0;
         while (i < text.length) {
             const ch = text.charAt(i);
+            if (ch === '[') {
+                const link = /^([^\[\]\n]+)\]\(siyuan:\/\/blocks\/([0-9]{14}-[a-z0-9]{7})\)/.exec(text.slice(i + 1));
+                if (link) {
+                    const innerStart = i + 1;
+                    for (let k = innerStart; k < innerStart + link[1].length; k++) colMap.push(k);
+                    out += link[1];
+                    // link[0] 已包含文本段本身：总消耗 = `[` + link[0].length
+                    i = innerStart + link[0].length;
+                    continue;
+                }
+            }
             if (ch === bt) {
                 const end = text.indexOf(bt, i + 1);
                 if (end > i) {
@@ -18476,6 +18795,15 @@ const subscriptionAutoRenewChecked = asset.kind === FORMAL_ASSET_KIND.VIRTUAL_SU
         workflow('[data-formal-sale]', () => this.openPhysicalSaleSheet(asset.id));
         workflow('[data-formal-prepaid-adjust]', () => this.openPrepaidAdjustSheet(asset.id));
         workflow('[data-formal-prepaid-outflow]', () => this.openPrepaidOutflowSheet(asset.id));
+        // v2.7.0：备注内笔记链接（[标题](siyuan://blocks/<id>)）点击直达对应笔记；
+        // 与「笔记关联」行同一 _jumpToBlock 路径（闭包直绑，不走委托）。
+        node.querySelectorAll('.am-note-link[data-note-block-id]').forEach(linkEl => {
+            linkEl.onclick = event => {
+                event.preventDefault();
+                event.stopPropagation();
+                this._jumpToBlock(linkEl.getAttribute('data-note-block-id'));
+            };
+        });
         // Stage 4: prepaid detail-card quick actions (charge/consume/refund for amount;
         // consume/adjust for count). Each opens a small sheet, writes the matching formal
         // transaction, then re-renders this product card so the projection stays live.
@@ -18658,12 +18986,97 @@ closeProductCard() {
     openItemMenu(id, target) {
         const a = this.assets.find(x => x.id === id);
         if (!a) return;
-        // 卡片菜单仅保留资产编辑与删除；状态、维护、使用等能力从其专属入口访问。
+        // v2.7.1 收口（用户实测反馈）：快速退役/恢复在役仅 买断 与 预付权益 两类，且只放
+        // ••• 菜单——实物已有表单退役、订阅由到期投影与续订管理，退役属低频操作不占详情卡
+        // 主操作区。wishlist 不提供。
         const items = [
             { label: this._t("menuEdit", "编辑"), click: () => this.openEditDialog(id) },
-            { label: this._t("menuDelete", "删除"), click: () => this.confirmDelete(id) },
         ];
+        if (a.status !== 'wishlist' && this._supportsQuickRetire(a)) {
+            if (a.status === 'retired') {
+                items.push({ label: this._t("menuReactivate", "重新启用"), click: () => this._reactivateFromMenu(id) });
+            } else {
+                items.push({ label: this._t("menuRetire", "标记退役"), click: () => this._quickRetireFromMenu(id) });
+            }
+        }
+        items.push({ label: this._t("menuDelete", "删除"), click: () => this.confirmDelete(id) });
         this._openItemMenu(target, items);
+    }
+
+    /** v2.7.1：快速退役入口适用范围——仅 买断（virtualPerpetual）与 预付权益（金额/次数）。 */
+    _supportsQuickRetire(asset) {
+        return !!asset && (asset.kind === FORMAL_ASSET_KIND.VIRTUAL_PERPETUAL
+            || asset.kind === FORMAL_ASSET_KIND.PREPAID_AMOUNT
+            || asset.kind === FORMAL_ASSET_KIND.PREPAID_COUNT);
+    }
+
+    /**
+     * v2.7.0 卡片菜单快速退役（v2.7.1 收口：仅买断/预付，仅 ••• 菜单入口）：scoped 确认
+     * 后 setStatus（退役日期=今天，之后可在编辑表单修改），成功后刷新 dock / modal 列表。
+     */
+    _quickRetireFromMenu(id) {
+        const a = this.assets.find(x => x.id === id);
+        if (!a || a.status !== 'active' || !this._supportsQuickRetire(a)) return;
+        this._confirmQuickRetire(a, this.dockElement || this._modalContainer || this._pluginOverlayRoot || document.body);
+    }
+
+    /** v2.7.0 卡片菜单恢复在役：setStatus(active)，lifecycle 记 restored 事件，成功后刷新列表。 */
+    async _reactivateFromMenu(id) {
+        const a = this.assets.find(x => x.id === id);
+        if (!a || a.status !== 'retired' || !this._supportsQuickRetire(a)) return;
+        try {
+            await this.setStatus(id, 'active');
+            this._runGuardedUiEffects({ renderDock: true, refreshModal: true });
+            this.showToast('✓ ' + this._t('reactivateDoneToast', '已恢复在役'));
+        } catch (error) {
+            console.warn('[AssetManagement] reactivate failed:', { assetId: String(id || ''), detail: String((error && error.message) || error || '') });
+            this.showToast('⚠️ ' + this._t('statusChangeSaveFailed', 'Failed to save status change'));
+        }
+    }
+
+    /**
+     * v2.7.0 快速退役确认弹窗（卡片菜单入口）。scoped confirm + setStatus：
+     * 退役日期=今天，记录与流水全保留，恢复在役可逆；预付 kind 且余额 >0 时
+     * 追加余额保留提示（htmlHint 为受控拼接，仅固定文案 + formatAmountMinor 输出）。
+     * 成功后关详情卡并刷新 dock / modal（v2.7.1：修「退役后列表不刷新」反馈）。
+     */
+    _confirmQuickRetire(asset, host) {
+        if (!asset || asset.status === 'wishlist' || asset.status === 'retired' || !this._supportsQuickRetire(asset)) return;
+        const resolvedHost = host || this.dockElement || this._modalContainer || this._pluginOverlayRoot || document.body;
+        let balanceHintHtml = '';
+        if (asset.kind === FORMAL_ASSET_KIND.PREPAID_AMOUNT || asset.kind === FORMAL_ASSET_KIND.PREPAID_COUNT) {
+            try {
+                const domain = this._formalDomainSnapshot();
+                const projection = projectFormalPrepaid(asset,
+                    (domain.prepaidTransactions || []).filter(record => record && record.assetId === asset.id),
+                    (domain.financialEvents || []).filter(event => event && event.assetId === asset.id));
+                if (projection && Number.isSafeInteger(projection.balanceAmountMinor) && projection.balanceAmountMinor > 0) {
+                    balanceHintHtml = '<strong>' + escapeHtml(this._t('quickRetirePrepaidBalanceHint', '预付余额 {amount} 会连同流水一起保留，不会清零。')
+                        .replace('{amount}', formatAmountMinor(projection.balanceAmountMinor, asset.currency || 'CNY'))) + '</strong>';
+                }
+            } catch (_) { /* 投影失败仅省略余额提示，不影响退役流程 */ }
+        }
+        this._openScopedConfirm(resolvedHost, {
+            title: this._t('quickRetireTitle', '标记退役'),
+            text: this._t('quickRetireConfirmText', '退役后资产移入退役列表、不再计入日均成本；记录与流水全部保留，可随时恢复在役，退役日期为今天。'),
+            htmlHint: balanceHintHtml,
+            confirmLabel: this._t('menuRetire', '标记退役'),
+            centerActions: true,
+            confirmTone: 'primary',
+            onConfirm: async () => {
+                try {
+                    await this.setStatus(asset.id, 'retired');
+                    // v2.7.1：与既有数据变更入口同口径——刷新 dock / modal 列表，资产即刻
+                    // 归入退役分组，不再需要手动切换视图；详情卡若开着也一并关闭。
+                    this._runGuardedUiEffects({ renderDock: true, refreshModal: true });
+                    this.closeProductCard();
+                    this.showToast('✓ ' + this._t('quickRetireDoneToast', '已标记退役'));
+                } catch (error) {
+                    console.warn('[AssetManagement] quick retire failed:', { assetId: String(asset.id || ''), detail: String((error && error.message) || error || '') });
+                    this.showToast('⚠️ ' + this._t('statusChangeSaveFailed', 'Failed to save status change'));
+                }
+            },
+        });
     }
 
     _closeItemMenu() {
@@ -20706,11 +21119,15 @@ closeProductCard() {
         return context || null;
     }
 
-    async setStatus(id, status) {
+    async setStatus(id, status, options) {
+        // v2.7.1：可选 options.changedOn（YYYY-MM-DD）——买断/预付表单退役允许自选退役日期；
+        // 缺省仍为今天，既有调用（菜单/详情卡/AI/批量）不传 options 行为不变。
+        const opts = options || {};
+        const changedOn = (typeof opts.changedOn === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(opts.changedOn)) ? opts.changedOn : todayISO();
         const context = await this._commitAssetAuditMutation(snapshot => {
             const current = snapshot.assets.find(item => item.id === id);
             if (!current || current.status === status) return { noop: true, context: { asset: current || null } };
-            const asset = mergeFormalV2AssetPatch(current, { status: status, statusChangedOn: todayISO() }, { now: new Date().toISOString(), today: todayISO() });
+            const asset = mergeFormalV2AssetPatch(current, { status: status, statusChangedOn: changedOn }, { now: new Date().toISOString(), today: changedOn });
             const lifecycle = this._formalLifecycle(asset, status === 'retired' ? 'retired' : (status === 'active' ? 'restored' : 'statusChanged'));
             lifecycle.details = { fromStatus: current.status, toStatus: status };
             return { assets: snapshot.assets.map(item => item.id === id ? asset : item), lifecycleEvents: snapshot.lifecycleEvents.concat(lifecycle), context: { asset } };
@@ -21736,12 +22153,20 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
             // （value='' + placeholder="0.00" 浅灰占位）视觉一致，不再显示深色实体「0」。
             const prepaidInitialCountValue = existing ? openingCountValue : (asset.openingCount != null ? Number(asset.openingCount) : '');
             const prepaidRemainingCountValue = existing ? projectedRemaining : prepaidInitialCountValue;
+            // v2.7.1：买断 / 预付的「物品状态」pill 直接内嵌进各自 kindBody 模板（与实物
+            // physicalKindBodyHtml 内的 pill 卡同构）——kindBodyHtml 三目链里的
+            // optionsSectionHtml 只拼在未知 kind 兜底分支上，虚拟/预付路径不经过 options。
+            // pill 仅编辑已购资产渲染（新建/ wishlist 不出），退役日期仅退役态展开。
+            const ownedEditable = !!(existing && (existing.status || 'active') !== 'wishlist');
+            const ownedStatusCardHtml = () => `<div class="am-form-card"><div class="am-form-row am-form-card__head am-form-row--between"><span class="am-form-row__label">${escapeHtml(this._t('formFieldStatus', '物品状态'))}</span><span class="am-status-pill-row" data-status-row><button type="button" class="am-type-pill" data-status-pill="active" aria-pressed="${(asset.status || 'active') !== 'retired'}">${escapeHtml(this._t('formFieldStatusActive', '在役'))}</button><button type="button" class="am-type-pill" data-status-pill="retired" aria-pressed="${(asset.status || 'active') === 'retired'}">${escapeHtml(this._t('formFieldStatusRetired', '退役'))}</button></span></div>${(asset.status || 'active') === 'retired' ?`<div class="am-form-card__expand"><div class="am-form-card__divider"></div><div class="am-fpc1-row am-form-card__row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldRetiredDate', '退役日期'))}</span><span class="am-fpc1-row__value am-fpc1-row__value--date am-datepicker-cell" data-am-datepicker="retiredDate" data-am-shortcuts="today"><input type="hidden" name="retiredDate" value="${escapeHtml(asset.statusChangedOn || todayISO())}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(asset.statusChangedOn || this._t('datePickerPlaceholder', '选择日期'))}</button></span></div></div>`: ''}</div>`;
+            const virtualPerpetualOptionsHtml = (currentKind === 'virtualPerpetual' && ownedEditable) ? ownedStatusCardHtml() : '';
+            const prepaidOptionsHtml = ((currentKind === 'prepaidAmount' || currentKind === 'prepaidCount') && ownedEditable) ? ownedStatusCardHtml() : '';
             const prepaidKindBodyHtml = isPrepaidKind
                 ? `<div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('prepaidKindTitle', '权益类型'))}</span><span class="am-type-pill-row am-type-pill-row--inline" data-type-pill-row><button type="button" class="am-type-pill${switchKindDisabledClass}" data-switch-kind="prepaidAmount" aria-pressed="${currentKind === 'prepaidAmount'}"${switchKindLockedTitle}${switchKindDisabledAttr}>${escapeHtml(this._t('formTypeAmount', '金额储值'))}</button><button type="button" class="am-type-pill${switchKindDisabledClass}" data-switch-kind="prepaidCount" aria-pressed="${currentKind === 'prepaidCount'}"${switchKindLockedTitle}${switchKindDisabledAttr}>${escapeHtml(this._t('formTypeCount', '次数权益'))}</button></span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldCost', '购买成本'))}</span><span class="am-fpc1-row__value am-virtual-price-cell">${this._renderGlassSelectCell('currency', prepaidCurrency, this._glassCurrencyOptions(prepaidCurrency), { disabled: !!(existing || wishCurrencyLocked) })}<input class="am-form-row__amount" name="amount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" value="${escapeHtml(prepaidCostMajor)}"></span></div></div></div>`
                 + (isAmount
                     ? `<div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldInitialAmount', '初始金额'))}</span><span class="am-fpc1-row__value">${existing ?`<input class="am-fpc1-row__value" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" value="${escapeHtml(prepaidInitialAmountMajor)}" readonly data-prepaid-initial-amount>`:`<input class="am-fpc1-row__value" name="initialAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" value="${escapeHtml(prepaidInitialAmountMajor)}" data-prepaid-initial-amount>`}</span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldRemainingAmount', '剩余金额'))}</span><span class="am-fpc1-row__value">${existing ?`<input class="am-fpc1-row__value" name="targetRemainingAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" value="${escapeHtml(prepaidRemainingAmountMajor)}" data-original-remaining-minor="${projectedBalanceMinor}">`:`<input class="am-fpc1-row__value" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" value="${escapeHtml(prepaidRemainingAmountMajor)}" readonly data-prepaid-remaining-amount>`}</span></div></div></div>`
                     : `<div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldInitialCount', '初始次数'))}</span><span class="am-fpc1-row__value">${existing ?`<input class="am-fpc1-row__value" type="number" min="0" step="1" value="${escapeHtml(String(prepaidInitialCountValue))}" readonly>`:`<input class="am-fpc1-row__value" name="openingCount" type="number" min="0" step="1" placeholder="0" value="${escapeHtml(String(prepaidInitialCountValue))}" data-prepaid-initial-count>`}</span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldRemainingCount', '剩余次数'))}</span><span class="am-fpc1-row__value">${existing ?`<input class="am-fpc1-row__value" name="targetRemainingCount" type="number" min="0" step="1" value="${escapeHtml(String(prepaidRemainingCountValue))}">`:`<input class="am-fpc1-row__value" name="initialRemainingCount" type="number" min="0" step="1" placeholder="0" value="${escapeHtml(String(prepaidRemainingCountValue))}" data-prepaid-remaining-count>`}</span></div></div></div>`)
-                + `<div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldAcquiredOn', '开通日期'))}</span><span class="am-fpc1-row__value am-fpc1-row__value--date am-datepicker-cell" data-am-datepicker="acquiredOn" data-am-shortcuts="today"><input type="hidden" name="acquiredOn" value="${escapeHtml(asset.acquiredOn || todayISO())}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(asset.acquiredOn || this._t('datePickerPlaceholder', '选择日期'))}</button></span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldExpiresOn', '有效期'))}</span><span class="am-fpc1-row__value am-fpc1-row__value--date am-datepicker-cell" data-am-datepicker="expiresOn" data-am-shortcuts="today"><input type="hidden" name="expiresOn" value="${escapeHtml(details.expiresOn || '')}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(details.expiresOn || this._t('datePickerPlaceholder', '选择日期'))}</button></span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldProvider', '商户名称'))}</span><input class="am-fpc1-row__value" type="text" name="provider" value="${escapeHtml(details.provider || '')}" placeholder="${escapeHtml(this._t('merchantEmpty', '未填写商户'))}"></div></div></div><div class="am-form-hint" hidden>${escapeHtml(this._t('formPrepaidHint', '预付权益包含储值卡与次卡，可在下方切换。'))}</div>`
+                + `<div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldAcquiredOn', '开通日期'))}</span><span class="am-fpc1-row__value am-fpc1-row__value--date am-datepicker-cell" data-am-datepicker="acquiredOn" data-am-shortcuts="today"><input type="hidden" name="acquiredOn" value="${escapeHtml(asset.acquiredOn || todayISO())}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(asset.acquiredOn || this._t('datePickerPlaceholder', '选择日期'))}</button></span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldExpiresOn', '有效期'))}</span><span class="am-fpc1-row__value am-fpc1-row__value--date am-datepicker-cell" data-am-datepicker="expiresOn" data-am-shortcuts="today"><input type="hidden" name="expiresOn" value="${escapeHtml(details.expiresOn || '')}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(details.expiresOn || this._t('datePickerPlaceholder', '选择日期'))}</button></span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldProvider', '商户名称'))}</span><input class="am-fpc1-row__value" type="text" name="provider" value="${escapeHtml(details.provider || '')}" placeholder="${escapeHtml(this._t('merchantEmpty', '未填写商户'))}"></div></div></div><div class="am-form-hint" hidden>${escapeHtml(this._t('formPrepaidHint', '预付权益包含储值卡与次卡，可在下方切换。'))}</div>` + prepaidOptionsHtml
                 : '';
             // Legacy prepaidSectionHtml is intentionally empty: prepaid now uses the card
             // layout above. Kept defined so typeSectionHtml stays valid for physical/virtual.
@@ -21790,7 +22215,7 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
                     : `<div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldPurchaseDate', '购买日期'))}</span><span class="am-fpc1-row__value am-fpc1-row__value--date am-datepicker-cell" data-am-datepicker="acquiredOn" data-am-shortcuts="today"><input type="hidden" name="acquiredOn" value="${escapeHtml(asset.acquiredOn || todayISO())}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(asset.acquiredOn || this._t('datePickerPlaceholder', '选择日期'))}</button></span></div></div></div>`)
                 + (isSubKind
                     ? `<div class="am-form-card"><div class="am-form-row am-form-row--toggle am-form-card__head"><span class="am-form-row__label">${escapeHtml(this._t('formFieldAutoRenew', '自动续费'))}</span><label class="am-form-toggle"><input type="checkbox" name="autoRenew" ${virtualAutoRenew ? 'checked' : ''}><span class="am-form-toggle__track"><span class="am-form-toggle__thumb"></span></span></label></div></div><div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldAccount', '账号'))}</span><input class="am-fpc1-row__value" type="text" name="accountLabel" value="${escapeHtml(virtualAccountLabel)}"></div></div></div>`
-                    : `<div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldAccount', '账号'))}</span><input class="am-fpc1-row__value" type="text" name="licenseAccountLabel" value="${escapeHtml(virtualLicenseAccount)}"></div></div></div>`)
+                    : `<div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('formFieldAccount', '账号'))}</span><input class="am-fpc1-row__value" type="text" name="licenseAccountLabel" value="${escapeHtml(virtualLicenseAccount)}"></div></div></div>${virtualPerpetualOptionsHtml}`)
                 : '';
             const typeSectionHtml = physicalSectionHtml + virtualSubSectionHtml + virtualPerpSectionHtml + prepaidSectionHtml;
             const physicalBasicCostHtml = currentKind === 'physical' ? `<div class="am-physical-basic-line"><label>${escapeHtml(this._t('formFieldCurrencyPrefix', '购买价格'))}</label><div class="am-currency-row"><select class="am-form-row__currency" name="currency"><option value="CNY">¥</option><option value="USD">$</option><option value="EUR">€</option><option value="GBP">£</option></select><span class="am-currency-row__symbol">${currencySymbol(asset.currency || 'CNY')}</span><input class="am-physical-line-input am-form-row__amount" name="amount" type="number" min="0" step="0.01" value="${escapeHtml(asset.amountMajor != null ? String(asset.amountMajor) : '')}"${existing ? ' readonly' : ''}></div></div><div class="am-physical-basic-date"><label>${escapeHtml(this._t('formFieldPurchaseDate', '购买日期'))}</label><span class="am-datepicker-cell" data-am-datepicker="acquiredOn" data-am-shortcuts="today"><input type="hidden" name="acquiredOn" value="${escapeHtml(asset.acquiredOn || todayISO())}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(asset.acquiredOn || this._t('datePickerPlaceholder', '选择日期'))}</button></span></div>` : '';
@@ -22143,6 +22568,18 @@ const opts = options || {}; const existing = opts.asset || null; const sourceWis
                                 const subPlan = this._planSubscriptionEdit(existing, form, currency, subOriginals);
                                 await this.updateAsset(existing.id, dto);
                                 await this._applySubscriptionEditPlan(existing, subPlan);
+                            } else if ((activeKind === FORMAL_ASSET_KIND.VIRTUAL_PERPETUAL || activeKind === FORMAL_ASSET_KIND.PREPAID_AMOUNT || activeKind === FORMAL_ASSET_KIND.PREPAID_COUNT)
+                                && previousStatus !== 'wishlist' && previousStatus !== dto.status
+                                && (dto.status === 'retired' || dto.status === 'active')) {
+                                // v2.7.1：买断/预付表单状态切换走域事务——退役（可自选退役日期）/
+                                // 恢复在役都经 setStatus 写 lifecycle + statusChangedOn，与卡片菜单
+                                // 快速退役同口径；retired→retired 仅改日期走下方通用 updateAsset。
+                                const transitionTo = dto.status;
+                                const transitionChangedOn = transitionTo === 'retired' ? (value('retiredDate') || todayISO()) : null;
+                                delete dto.status; delete dto.statusChangedOn;
+                                await this.updateAsset(existing.id, dto);
+                                if (purchasePlan) await this._applyPurchasePriceEditPlan(existing, purchasePlan);
+                                await this.setStatus(existing.id, transitionTo, transitionChangedOn ? { changedOn: transitionChangedOn } : undefined);
                             } else {
                                 await this.updateAsset(existing.id, dto);
                                 if (purchasePlan) await this._applyPurchasePriceEditPlan(existing, purchasePlan);
@@ -22852,6 +23289,7 @@ openMaintenanceSheet(id, preferredHost) { return this.openFormalWorkflowDialog(i
                 event.preventDefault();
                 try {
                     await this.retirePhysicalAsset(id, { retiredDate: form.elements.retiredDate.value, note: form.elements.note.value });
+                    this._runGuardedUiEffects({ renderDock: true, refreshModal: true });
                     this.showToast('✓ ' + this._t('physicalRetiredToast', '已退役'));
                     dialog.destroy();
                 } catch (error) {
@@ -22881,6 +23319,7 @@ openMaintenanceSheet(id, preferredHost) { return this.openFormalWorkflowDialog(i
                         soldOn: form.elements.soldOn.value,
                         note: form.elements.note.value,
                     });
+                    this._runGuardedUiEffects({ renderDock: true, refreshModal: true });
                     this.showToast('✓ ' + this._t('physicalSoldToast', '已转让'));
                     dialog.destroy();
                 } catch (error) {
@@ -22960,6 +23399,15 @@ openMaintenanceSheet(id, preferredHost) { return this.openFormalWorkflowDialog(i
      * On success the product card is re-opened so the projection (balance/remaining + timeline)
      * refreshes. Parameters strictly follow the read transaction-method signatures.
      */
+    /**
+     * v2.7.1：预付快捷记账（充值 / 消费 / 退款 / 记次数 / 校正次数）收编为插件内液态玻璃
+     * sheet——此前走 showDialog 原生 Dialog，弹在插件 UI 之外（裸白底、脱离详情卡层级）；
+     * 现与维保 / 预付流水工作流 sheet 同款：am-edit-sheet-mask.am-workflow-sheet-mask
+     * （z=60 浮于详情卡 z=55 之上，同 host 同 stacking context）+ grabber / header / footer，
+     * Esc（玻璃下拉优先消费 + 顶层检查）/ 遮罩点击 / 关闭按钮关闭。字段语义、校验与域方法
+     * 调用（addPrepaidTransaction / recordPrepaidCountAdjustment / recordPrepaidConsumption）
+     * 与旧实现完全一致；成功 toast 后关 sheet 并原 host 重开详情卡刷新投影。
+     */
     openPrepaidQuickActionSheet(id, action, preferredHost) {
         const asset = (this.assets || []).find(item => item && item.id === id);
         if (!asset || [FORMAL_ASSET_KIND.PREPAID_AMOUNT, FORMAL_ASSET_KIND.PREPAID_COUNT].indexOf(asset.kind) < 0 || asset.status === 'wishlist') throw new Error('prepaid asset is required');
@@ -22984,48 +23432,87 @@ openMaintenanceSheet(id, preferredHost) { return this.openFormalWorkflowDialog(i
         const config = ACTIONS[action];
         if (!config) throw new Error('unknown prepaid quick action');
         const isAmountAction = config.kind === 'amount';
-        const summary = isAmount
-            ? `${this._t('prepaidBalance', '余额')}：${formatAmountMinor(currentBalanceMinor, currency)}`
-            : `${this._t('prepaidRemainingCount', '剩余次数')}：${currentRemaining}`;
+        const summaryLabel = this._t(isAmount ? 'prepaidBalance' : 'prepaidRemainingCount', isAmount ? '余额' : '剩余次数');
+        const summaryValue = isAmount ? formatAmountMinor(currentBalanceMinor, currency) : String(currentRemaining);
+        const host = preferredHost || this._productCardHost || this.dockElement || this._modalContainer || this._pluginOverlayRoot || document.body;
         const valueField = isAmountAction
-            ? `<label>${escapeHtml(this._t('prepaidFieldAmount', '金额'))}${this._requiredDotHtml()}<input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required></label>`
+            ? `<input class="am-fpc1-row__value" type="number" name="amount" min="0.01" step="0.01" inputmode="decimal" placeholder="0.00" required>`
             : (config.kind === 'countAdjust'
-                ? `<label>${escapeHtml(this._t('prepaidRemainingCountField', '剩余次数'))}${this._requiredDotHtml()}<input name="targetCount" type="number" min="0" step="1" value="${currentRemaining}" required></label>`
-                : `<label>${escapeHtml(this._t('prepaidFieldCount', '次数'))}${this._requiredDotHtml()}<input name="count" type="number" min="1" step="1" value="1" required></label>`);
-        const body = `<div class="am-prepaid-quick-sheet"><p class="am-prepaid-quick-sheet__summary">${escapeHtml(summary)}</p><form data-prepaid-quick-form>${valueField}<label>${escapeHtml(this._t('prepaidFieldEffectiveDate', '生效日期'))}${this._requiredDotHtml()}<span class="am-datepicker-cell" data-am-datepicker="effectiveDate" data-am-shortcuts="today"><input type="hidden" name="effectiveDate" value="${escapeHtml(defaultDate)}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(defaultDate || this._t('datePickerPlaceholder', '选择日期'))}</button></span></label><label>${escapeHtml(this._t('fieldNote', '备注'))}<input name="note" type="text"></label><button type="submit">${escapeHtml(this._t('btnSave', '保存'))}</button></form></div>`;
-        return this.showDialog(config.title, body, dialog => {
-            const form = dialog.element.querySelector('[data-prepaid-quick-form]');
-            this._bindAmDatepickers(dialog.element);
-            form.onsubmit = async event => {
+                ? `<input class="am-fpc1-row__value" type="number" name="targetCount" min="0" step="1" value="${currentRemaining}" required>`
+                : `<input class="am-fpc1-row__value" type="number" name="count" min="1" step="1" value="1" required>`);
+        const valueLabel = isAmountAction
+            ? this._t('prepaidFieldAmount', '金额')
+            : (config.kind === 'countAdjust' ? this._t('prepaidRemainingCountField', '剩余次数') : this._t('prepaidFieldCount', '次数'));
+        const mask = document.createElement('div'); mask.className = 'am-edit-sheet-mask am-workflow-sheet-mask';
+        mask.innerHTML = `<div class="am-edit-sheet am-form-shell am-workflow-sheet am-prepaid-quick-sheet"><div class="am-edit-sheet__grabber"></div><header class="am-edit-sheet__header am-form-shell__header"><button type="button" class="am-edit-sheet__close" data-close aria-label="${escapeHtml(this._t('btnClose', '关闭'))}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button><h2 class="am-edit-sheet__title">${escapeHtml(config.title)}</h2><span class="am-form-shell__header-spacer"></span></header><form data-prepaid-quick-form data-form><div class="am-edit-sheet__body am-form-shell__body"><div class="am-form-card"><div class="am-fpc1-rows"><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(summaryLabel)}</span><span class="am-fpc1-row__value">${escapeHtml(summaryValue)}</span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(valueLabel)}${this._requiredDotHtml()}</span>${valueField}</div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('prepaidFieldEffectiveDate', '生效日期'))}${this._requiredDotHtml()}</span><span class="am-fpc1-row__value am-fpc1-row__value--date am-datepicker-cell" data-am-datepicker="effectiveDate" data-am-shortcuts="today"><input type="hidden" name="effectiveDate" value="${escapeHtml(defaultDate)}"><button type="button" class="am-datepicker-trigger" data-am-date-trigger>${escapeHtml(defaultDate || this._t('datePickerPlaceholder', '选择日期'))}</button></span></div><div class="am-fpc1-divider"></div><div class="am-fpc1-row"><span class="am-fpc1-row__label">${escapeHtml(this._t('fieldNote', '备注'))}</span><input class="am-fpc1-row__value" name="note" type="text"></div></div></div></div><footer class="am-form-shell__footer"><button type="submit" class="am-form-shell__save" data-save>${escapeHtml(this._t('btnSave', '保存'))}<span class="am-form-shell__save-spinner"></span></button></footer></form></div>`;
+        const isTopmostPluginSheet = () => {
+            if (!mask.parentNode) return false;
+            const overlays = mask.parentNode.querySelectorAll(':scope > .am-edit-sheet-mask, :scope > .am-product-card-mask');
+            return overlays.length > 0 && overlays[overlays.length - 1] === mask;
+        };
+        const close = () => {
+            window.removeEventListener('keydown', onKeydown, KEYDOWN_CAPTURE_OPTS);
+            if (mask.parentNode) mask.parentNode.removeChild(mask);
+        };
+        const onKeydown = event => {
+            if (event.key !== 'Escape') return;
+            // 与续费 sheet 同款：Esc 优先消费已展开的玻璃下拉，再按顶层检查关闭本 sheet
+            if (this._closeAmGlassSelectPanels()) {
                 event.preventDefault();
-                try {
-                    const date = form.elements.effectiveDate.value || defaultDate;
-                    const note = form.elements.note.value || '';
-                    if (isAmountAction) {
-                        const amountMinor = parseMajorToMinor(String(form.elements.amount.value || '0'), currency);
-                        if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) throw new Error(this._t('prepaidFieldAmount', '金额'));
-                        if (config.type === 'outflow' && amountMinor > currentBalanceMinor) {
-                            throw new Error(this._t('prepaidBalanceInsufficient', '余额不足：需要 {need}，现有 {have}', { need: formatAmountMinor(amountMinor, currency), have: formatAmountMinor(currentBalanceMinor, currency) }));
-                        }
-                        await this.addPrepaidTransaction(id, { type: config.type, amountMinor: amountMinor, date: date, note: note });
-                    } else if (config.kind === 'countAdjust') {
-                        const targetCount = Number(form.elements.targetCount.value);
-                        if (!Number.isSafeInteger(targetCount) || targetCount < 0) throw new Error(this._t('prepaidRemainingCountField', '剩余次数'));
-                        await this.recordPrepaidCountAdjustment(id, { targetCount: targetCount, effectiveDate: date, note: note });
-                    } else {
-                        const count = Number(form.elements.count.value);
-                        if (!Number.isSafeInteger(count) || count <= 0) throw new Error(this._t('prepaidFieldCount', '次数'));
-                        await this.recordPrepaidConsumption(id, { count: count, effectiveDate: date, note: note });
+                event.stopPropagation();
+                if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+                return;
+            }
+            if (!isTopmostPluginSheet()) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+            close();
+        };
+        const closeBtn = mask.querySelector('[data-close]');
+        if (closeBtn) closeBtn.onclick = close;
+        mask.onclick = event => { if (event.target === mask) close(); };
+        const form = mask.querySelector('form[data-prepaid-quick-form]');
+        this._bindAmDatepickers(mask);
+        let submitting = false;
+        form.onsubmit = async event => {
+            event.preventDefault();
+            if (submitting) return;
+            submitting = true;
+            const saveButton = form.querySelector('[type="submit"]');
+            if (saveButton) { saveButton.disabled = true; saveButton.setAttribute('aria-busy', 'true'); }
+            try {
+                const date = form.elements.effectiveDate.value || defaultDate;
+                const note = form.elements.note.value || '';
+                if (isAmountAction) {
+                    const amountMinor = parseMajorToMinor(String(form.elements.amount.value || '0'), currency);
+                    if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) throw new Error(this._t('prepaidFieldAmount', '金额'));
+                    if (config.type === 'outflow' && amountMinor > currentBalanceMinor) {
+                        throw new Error(this._t('prepaidBalanceInsufficient', '余额不足：需要 {need}，现有 {have}', { need: formatAmountMinor(amountMinor, currency), have: formatAmountMinor(currentBalanceMinor, currency) }));
                     }
-                    this.showToast('✓ ' + config.success);
-                    dialog.destroy();
-                    this.closeProductCard();
-                    this.openFormalProductCard(id, preferredHost);
-                } catch (error) {
-                    this.showToast('⚠️ ' + error.message);
+                    await this.addPrepaidTransaction(id, { type: config.type, amountMinor: amountMinor, date: date, note: note });
+                } else if (config.kind === 'countAdjust') {
+                    const targetCount = Number(form.elements.targetCount.value);
+                    if (!Number.isSafeInteger(targetCount) || targetCount < 0) throw new Error(this._t('prepaidRemainingCountField', '剩余次数'));
+                    await this.recordPrepaidCountAdjustment(id, { targetCount: targetCount, effectiveDate: date, note: note });
+                } else {
+                    const count = Number(form.elements.count.value);
+                    if (!Number.isSafeInteger(count) || count <= 0) throw new Error(this._t('prepaidFieldCount', '次数'));
+                    await this.recordPrepaidConsumption(id, { count: count, effectiveDate: date, note: note });
                 }
-            };
-        });
+                this.showToast('✓ ' + config.success);
+                close();
+                this.closeProductCard();
+                this.openFormalProductCard(id, preferredHost);
+            } catch (error) {
+                submitting = false;
+                if (saveButton) { saveButton.disabled = false; saveButton.setAttribute('aria-busy', 'false'); }
+                this.showToast('⚠️ ' + (error && error.message ? error.message : 'failed'));
+            }
+        };
+        host.appendChild(mask);
+        window.addEventListener('keydown', onKeydown, KEYDOWN_CAPTURE_OPTS);
+        return mask;
     }
 
     /**
