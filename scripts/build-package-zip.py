@@ -3,8 +3,14 @@
 The archive is written to a temporary path, reopened, and checked before it
 atomically replaces package.zip. A failed assertion therefore leaves the last
 valid release package untouched.
+
+Output location: by default package.zip lands in the repository root. Pass
+``--output <path>`` (or set the ``AM_PACKAGE_OUTPUT`` environment variable) to
+write the archive elsewhere — e.g. a workspace-level artifacts folder — without
+leaving build artifacts inside the source tree.
 """
 
+import argparse
 import json
 import os
 import re
@@ -12,7 +18,7 @@ import sys
 import zipfile
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-ZIP_PATH = os.path.join(ROOT, "package.zip")
+DEFAULT_ZIP_PATH = os.path.join(ROOT, "package.zip")
 EXPECTED_PNG_COUNT = 33
 EXPECTED_ENTRY_COUNT = 44
 ICON_MAX_BYTES = 20 * 1024
@@ -235,8 +241,29 @@ def verify_archive(path, whitelist, version):
     }
 
 
-def main():
-    tmp_path = ZIP_PATH + ".tmp"
+def resolve_zip_path(argv=None):
+    """Resolve the output archive path: --output/-o arg > AM_PACKAGE_OUTPUT env > repo default."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--output", "-o", default=None, help="destination package.zip path (file or directory)")
+    parser.add_argument("ignored", nargs="*", help=argparse.SUPPRESS)
+    args, _ = parser.parse_known_args(argv)
+    target = args.output or os.environ.get("AM_PACKAGE_OUTPUT") or ""
+    if not target:
+        return DEFAULT_ZIP_PATH
+    if os.path.isdir(target):
+        target = os.path.join(target, "package.zip")
+    target = os.path.abspath(target)
+    parent = os.path.dirname(target)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    return target
+
+
+def main(argv=None):
+    zip_path = resolve_zip_path(argv)
+    if zip_path != DEFAULT_ZIP_PATH:
+        print(f"[pkg] output: {zip_path}")
+    tmp_path = zip_path + ".tmp"
     try:
         src_version = plugin_version(os.path.join(ROOT, "plugin.json"))
         icon_pngs = preset_icon_pngs()
@@ -252,7 +279,7 @@ def main():
                 zf.write(abs_path, rel)
 
         result = verify_archive(tmp_path, whitelist, src_version)
-        os.replace(tmp_path, ZIP_PATH)
+        os.replace(tmp_path, zip_path)
     except Exception as error:
         if os.path.exists(tmp_path):
             try:
@@ -261,7 +288,7 @@ def main():
                 pass
         sys.exit(f"ABORT: {error}")
 
-    print(f"[pkg] wrote {ZIP_PATH}")
+    print(f"[pkg] wrote {zip_path}")
     print(
         f"[pkg] verified entries: {result['entries']} "
         f"({result['preset_pngs']} preset PNGs + manifest)"
